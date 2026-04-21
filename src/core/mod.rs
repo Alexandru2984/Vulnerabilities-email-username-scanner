@@ -18,10 +18,16 @@ impl Engine {
 
     #[instrument(skip(self))]
     pub async fn start_scan(&self, target: String) -> anyhow::Result<Uuid> {
-        // SSRF protection (String checks + DNS Resolution)
-        if !is_safe_target(&target).await {
-            return Err(anyhow::anyhow!("Invalid target: Internal or reserved IPs are not allowed"));
+        // Enforce maximum length to prevent DoS via database or parsing exhaustion
+        if target.len() > 255 {
+            return Err(anyhow::anyhow!("Target too long. Maximum length is 255 characters."));
         }
+
+        // SSRF protection (String checks + DNS Resolution Fail-Closed)
+        let resolved_ip = match is_safe_target(&target).await {
+            Ok(ip) => ip,
+            Err(e) => return Err(e),
+        };
 
         let scan_id = Uuid::new_v4();
 
@@ -44,13 +50,13 @@ impl Engine {
         // 2. Spawn worker to process this scan asynchronously
         let pool_clone = self.pool.clone();
         tokio::spawn(async move {
-            Self::run_plugins(scan_id, target, pool_clone).await;
+            Self::run_plugins(scan_id, target, resolved_ip, pool_clone).await;
         });
 
         Ok(scan_id)
     }
 
-    async fn run_plugins(scan_id: Uuid, target: String, pool: PgPool) {
+    async fn run_plugins(scan_id: Uuid, target: String, resolved_ip: Option<std::net::IpAddr>, pool: PgPool) {
         let plugins = get_all_plugins();
         let (tx, mut rx) = mpsc::channel::<Finding>(100);
 
@@ -66,9 +72,10 @@ impl Engine {
             let tx_clone = tx.clone();
             let target_clone = target_arc.clone();
             let scan_id_clone = scan_id;
+            let ip_clone = resolved_ip;
             
             let handle = tokio::spawn(async move {
-                if let Err(e) = plugin.run(scan_id_clone, &target_clone, target_type, tx_clone).await {
+                if let Err(e) = plugin.run(scan_id_clone, &target_clone, ip_clone, target_type, tx_clone).await {
                     error!("Plugin {} failed: {}", plugin.name(), e);
                 }
             });
@@ -138,31 +145,40 @@ pub fn classify_target(target: &str) -> TargetType {
     }
 }
 
-pub async fn is_safe_target(target: &str) -> bool {
+pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<std::net::IpAddr>> {
     let t_lower = target.to_lowercase();
     if t_lower.contains("localhost") || t_lower.contains("127.0.0.1") || t_lower.contains("169.254") || t_lower.contains("::1") || t_lower.contains("0.0.0.0") || t_lower.starts_with("10.") || t_lower.starts_with("192.168.") || t_lower.starts_with("172.") {
-        return false;
+        return Err(anyhow::anyhow!("Internal or reserved IPs are not allowed"));
     }
 
     let target_type = classify_target(target);
     if target_type == TargetType::Domain {
-        // Resolve DNS to prevent DNS rebinding SSRF
-        if let Ok(addrs) = tokio::net::lookup_host(format!("{}:80", target)).await {
-            for addr in addrs {
-                let ip = addr.ip();
-                if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
-                    return false;
-                }
-                if let std::net::IpAddr::V4(ipv4) = ip {
-                    if ipv4.is_private() || ipv4.is_link_local() || ipv4.is_broadcast() {
-                        return false;
+        // Resolve DNS to prevent DNS rebinding SSRF and return the resolved IP for TOCTOU protection
+        match tokio::net::lookup_host(format!("{}:80", target)).await {
+            Ok(mut addrs) => {
+                if let Some(addr) = addrs.next() {
+                    let ip = addr.ip();
+                    if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+                        return Err(anyhow::anyhow!("Target resolves to loopback/unspecified IP"));
                     }
+                    if let std::net::IpAddr::V4(ipv4) = ip {
+                        if ipv4.is_private() || ipv4.is_link_local() || ipv4.is_broadcast() {
+                            return Err(anyhow::anyhow!("Target resolves to private IP"));
+                        }
+                    }
+                    return Ok(Some(ip));
+                } else {
+                    return Err(anyhow::anyhow!("Target did not resolve to any IP"));
                 }
+            }
+            Err(e) => {
+                // Fail-Closed: If DNS resolution fails, block the scan
+                return Err(anyhow::anyhow!("DNS resolution failed for target: {}", e));
             }
         }
     }
     
-    true
+    Ok(None)
 }
 
 #[cfg(test)]

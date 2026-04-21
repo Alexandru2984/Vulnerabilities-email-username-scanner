@@ -26,7 +26,7 @@ pub trait Plugin: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Runs the plugin against a target and streams findings to the channel
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()>;
+    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()>;
 }
 
 /// Helper function to register all available plugins
