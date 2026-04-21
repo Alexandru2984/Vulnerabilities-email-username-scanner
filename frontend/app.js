@@ -91,16 +91,30 @@ document.addEventListener('DOMContentLoaded', () => {
             const tr = document.createElement('tr');
             
             const date = new Date(f.created_at).toLocaleTimeString();
-            
-            // Pretty print JSON data
             const dataStr = JSON.stringify(f.data, null, 2);
 
-            tr.innerHTML = `
-                <td>${date}</td>
-                <td><span style="color:var(--accent-color)">${f.plugin_name}</span></td>
-                <td>${f.finding_type}</td>
-                <td><pre>${dataStr}</pre></td>
-            `;
+            const tdDate = document.createElement('td');
+            tdDate.textContent = date;
+
+            const tdPlugin = document.createElement('td');
+            const spanPlugin = document.createElement('span');
+            spanPlugin.style.color = 'var(--accent-color)';
+            spanPlugin.textContent = f.plugin_name;
+            tdPlugin.appendChild(spanPlugin);
+
+            const tdType = document.createElement('td');
+            tdType.textContent = f.finding_type;
+
+            const tdData = document.createElement('td');
+            const preData = document.createElement('pre');
+            preData.textContent = dataStr;
+            tdData.appendChild(preData);
+
+            tr.appendChild(tdDate);
+            tr.appendChild(tdPlugin);
+            tr.appendChild(tdType);
+            tr.appendChild(tdData);
+            
             resultsBody.appendChild(tr);
         });
     }

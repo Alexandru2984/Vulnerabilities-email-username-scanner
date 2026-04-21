@@ -26,7 +26,7 @@ impl Plugin for HttpPlugin {
         
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
-            .redirect(Policy::limited(5))
+            .redirect(Policy::none()) // Prevent SSRF via redirect
             .danger_accept_invalid_certs(true) // For bug bounty recon, accept invalid certs
             .build()?;
 
@@ -42,6 +42,17 @@ impl Plugin for HttpPlugin {
                 let server = res.headers().get("server").and_then(|h| h.to_str().ok()).unwrap_or("unknown").to_string();
                 let x_powered_by = res.headers().get("x-powered-by").and_then(|h| h.to_str().ok()).unwrap_or("unknown").to_string();
                 
+                // WAF Detection
+                let mut waf = "none".to_string();
+                let server_lower = server.to_lowercase();
+                if server_lower.contains("cloudflare") || res.headers().contains_key("cf-ray") {
+                    waf = "Cloudflare".to_string();
+                } else if server_lower.contains("awselb") {
+                    waf = "AWS WAF / ELB".to_string();
+                } else if server_lower.contains("imperva") || res.headers().contains_key("x-iinfo") {
+                    waf = "Imperva".to_string();
+                }
+
                 // Read a bit of body for title extraction
                 let mut title = String::new();
                 if let Ok(body) = res.text().await {
@@ -62,6 +73,7 @@ impl Plugin for HttpPlugin {
                         "status": status,
                         "server": server,
                         "x_powered_by": x_powered_by,
+                        "waf": waf,
                         "title": title.trim(),
                     }),
                     severity: FindingSeverity::Info,

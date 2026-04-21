@@ -39,7 +39,7 @@ pub fn create_router(pool: PgPool) -> Router {
 
     // API Routes
     let api_routes = Router::new()
-        .route("/scan", post(start_scan))
+        .route("/scan", post(start_scan).layer(tower::limit::GlobalConcurrencyLimitLayer::new(10))) // Max 10 concurrent scans
         .route("/scans/{id}", get(get_scan_status))
         .route("/scans/{id}/results", get(get_scan_results))
         .with_state(state);
@@ -51,7 +51,7 @@ pub fn create_router(pool: PgPool) -> Router {
     Router::new()
         .nest("/api", api_routes)
         .fallback_service(frontend_service)
-        .layer(CorsLayer::permissive())
+        .layer(CorsLayer::new()) // Default CORS (restrictive, same-origin only)
         .layer(TraceLayer::new_for_http())
 }
 

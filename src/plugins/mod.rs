@@ -5,8 +5,12 @@ use uuid::Uuid;
 
 pub mod dns;
 pub mod email_breach;
+pub mod fuzzer;
 pub mod http;
+pub mod ip_info;
+pub mod port_scanner;
 pub mod subdomain;
+pub mod tech_stack;
 pub mod username;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,5 +37,9 @@ pub fn get_all_plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(http::HttpPlugin),
         Box::new(email_breach::EmailBreachPlugin),
         Box::new(username::UsernameFootprintPlugin),
+        Box::new(port_scanner::PortScannerPlugin),
+        Box::new(ip_info::IpInfoPlugin),
+        Box::new(tech_stack::TechStackPlugin),
+        Box::new(fuzzer::FuzzerPlugin),
     ]
 }
