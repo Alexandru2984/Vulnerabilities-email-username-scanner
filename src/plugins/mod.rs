@@ -4,8 +4,17 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub mod dns;
+pub mod email_breach;
 pub mod http;
 pub mod subdomain;
+pub mod username;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetType {
+    Domain,
+    Email,
+    Username,
+}
 
 #[async_trait]
 pub trait Plugin: Send + Sync {
@@ -13,7 +22,7 @@ pub trait Plugin: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Runs the plugin against a target and streams findings to the channel
-    async fn run(&self, scan_id: Uuid, target: &str, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()>;
+    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()>;
 }
 
 /// Helper function to register all available plugins
@@ -22,5 +31,7 @@ pub fn get_all_plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(subdomain::CrtShPlugin),
         Box::new(dns::DnsPlugin),
         Box::new(http::HttpPlugin),
+        Box::new(email_breach::EmailBreachPlugin),
+        Box::new(username::UsernameFootprintPlugin),
     ]
 }

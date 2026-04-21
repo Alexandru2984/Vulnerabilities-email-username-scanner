@@ -1,5 +1,5 @@
 use crate::models::{Finding, FindingSeverity};
-use super::Plugin;
+use super::{Plugin, TargetType};
 use async_trait::async_trait;
 use reqwest::{Client, redirect::Policy};
 use tokio::sync::mpsc;
@@ -16,8 +16,13 @@ impl Plugin for HttpPlugin {
         "http_probe"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
-        info!("Running HttpPlugin for {}", target);
+    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+        let domain = match target_type {
+            TargetType::Domain => target.to_string(),
+            _ => return Ok(()), // Only run on domains
+        };
+
+        info!("Running HttpPlugin for domain {}", domain);
         
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
@@ -29,7 +34,7 @@ impl Plugin for HttpPlugin {
         let schemes = vec!["http", "https"];
         
         for scheme in schemes {
-            let url = format!("{}://{}", scheme, target);
+            let url = format!("{}://{}", scheme, domain);
             if let Ok(res) = client.get(&url).send().await {
                 let status = res.status().as_u16();
                 

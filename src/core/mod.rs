@@ -1,5 +1,5 @@
 use crate::models::{Finding, Scan, ScanStatus};
-use crate::plugins::get_all_plugins;
+use crate::plugins::{get_all_plugins, TargetType};
 use chrono::Utc;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -21,16 +21,16 @@ impl Engine {
         let scan_id = Uuid::new_v4();
 
         // 1. Create Scan record
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO scans (id, target, status, created_at)
             VALUES ($1, $2, $3, $4)
             "#,
-            scan_id,
-            target,
-            "running",
-            Utc::now()
         )
+        .bind(scan_id)
+        .bind(&target)
+        .bind("running")
+        .bind(Utc::now())
         .execute(&self.pool)
         .await?;
 
@@ -49,6 +49,16 @@ impl Engine {
         let plugins = get_all_plugins();
         let (tx, mut rx) = mpsc::channel::<Finding>(100);
 
+        let target_type = if target.contains('@') {
+            TargetType::Email
+        } else if target.contains('.') && !target.contains(' ') {
+            TargetType::Domain
+        } else {
+            TargetType::Username
+        };
+
+        info!("Target {} classified as {:?}", target, target_type);
+
         let target_arc = Arc::new(target);
 
         // Spawn each plugin
@@ -59,7 +69,7 @@ impl Engine {
             let scan_id_clone = scan_id;
             
             let handle = tokio::spawn(async move {
-                if let Err(e) = plugin.run(scan_id_clone, &target_clone, tx_clone).await {
+                if let Err(e) = plugin.run(scan_id_clone, &target_clone, target_type, tx_clone).await {
                     error!("Plugin {} failed: {}", plugin.name(), e);
                 }
             });
@@ -72,19 +82,19 @@ impl Engine {
         // Process findings
         while let Some(finding) = rx.recv().await {
             // Save finding to DB
-            let res = sqlx::query!(
+            let res = sqlx::query(
                 r#"
                 INSERT INTO findings (id, scan_id, plugin_name, finding_type, data, severity, created_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 "#,
-                finding.id,
-                finding.scan_id,
-                finding.plugin_name,
-                finding.finding_type,
-                finding.data,
-                format!("{:?}", finding.severity).to_lowercase(),
-                finding.created_at
             )
+            .bind(finding.id)
+            .bind(finding.scan_id)
+            .bind(&finding.plugin_name)
+            .bind(&finding.finding_type)
+            .bind(&finding.data)
+            .bind(format!("{:?}", finding.severity).to_lowercase())
+            .bind(finding.created_at)
             .execute(&pool)
             .await;
 
@@ -99,15 +109,15 @@ impl Engine {
         }
 
         // Update scan status to completed
-        let res = sqlx::query!(
+        let res = sqlx::query(
             r#"
             UPDATE scans
             SET status = 'completed', completed_at = $1
             WHERE id = $2
             "#,
-            Utc::now(),
-            scan_id
         )
+        .bind(Utc::now())
+        .bind(scan_id)
         .execute(&pool)
         .await;
 

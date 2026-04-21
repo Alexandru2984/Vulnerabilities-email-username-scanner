@@ -40,8 +40,8 @@ pub fn create_router(pool: PgPool) -> Router {
     // API Routes
     let api_routes = Router::new()
         .route("/scan", post(start_scan))
-        .route("/scans/:id", get(get_scan_status))
-        .route("/scans/:id/results", get(get_scan_results))
+        .route("/scans/{id}", get(get_scan_status))
+        .route("/scans/{id}/results", get(get_scan_results))
         .with_state(state);
 
     // Serve frontend static files
@@ -81,15 +81,14 @@ async fn get_scan_status(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Scan>, (StatusCode, String)> {
-    let scan = sqlx::query_as!(
-        Scan,
+    let scan = sqlx::query_as::<_, Scan>(
         r#"
-        SELECT id, target, status as "status: _", created_at, completed_at
+        SELECT id, target, status, created_at, completed_at
         FROM scans
         WHERE id = $1
         "#,
-        id
     )
+    .bind(id)
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -105,16 +104,15 @@ async fn get_scan_results(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Finding>>, (StatusCode, String)> {
-    let findings = sqlx::query_as!(
-        Finding,
+    let findings = sqlx::query_as::<_, Finding>(
         r#"
-        SELECT id, scan_id, plugin_name, finding_type, data, severity as "severity: _", created_at
+        SELECT id, scan_id, plugin_name, finding_type, data, severity, created_at
         FROM findings
         WHERE scan_id = $1
         ORDER BY created_at DESC
         "#,
-        id
     )
+    .bind(id)
     .fetch_all(&state.pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

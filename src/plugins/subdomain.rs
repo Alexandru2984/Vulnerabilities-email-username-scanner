@@ -1,5 +1,5 @@
 use crate::models::{Finding, FindingSeverity};
-use super::Plugin;
+use super::{Plugin, TargetType};
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::sync::mpsc;
@@ -21,10 +21,16 @@ impl Plugin for CrtShPlugin {
         "subdomain_crtsh"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
-        info!("Running CrtShPlugin for {}", target);
+    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+        let domain = match target_type {
+            TargetType::Domain => target.to_string(),
+            TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
+            TargetType::Username => return Ok(()),
+        };
+
+        info!("Running CrtShPlugin for domain {}", domain);
         
-        let url = format!("https://crt.sh/?q={}&output=json", target);
+        let url = format!("https://crt.sh/?q={}&output=json", domain);
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
@@ -42,7 +48,7 @@ impl Plugin for CrtShPlugin {
         for entry in entries {
             for sub in entry.name_value.split('\n') {
                 let sub = sub.trim().to_lowercase();
-                if !sub.is_empty() && !sub.contains('*') && sub.ends_with(target) {
+                if !sub.is_empty() && !sub.contains('*') && sub.ends_with(&domain) {
                     subdomains.insert(sub);
                 }
             }
