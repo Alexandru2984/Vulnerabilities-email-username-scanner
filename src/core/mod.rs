@@ -213,12 +213,22 @@ pub fn validate_target(target: &str) -> anyhow::Result<()> {
 
     match target_type {
         TargetType::Domain => {
-            // Strict domain regex: letters, digits, hyphens, dots, ending with valid TLD
+            // Allow either a valid domain name or an IPv4 address
             let domain_re = Regex::new(
                 r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$"
             ).unwrap();
-            if !domain_re.is_match(target) {
-                return Err(anyhow::anyhow!("Invalid domain format. Only alphanumeric characters, hyphens, and dots are allowed."));
+            let ipv4_re = Regex::new(
+                r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$"
+            ).unwrap();
+            if !domain_re.is_match(target) && !ipv4_re.is_match(target) {
+                return Err(anyhow::anyhow!("Invalid domain/IP format. Provide a valid domain name or IPv4 address."));
+            }
+            // Extra validation for IPs: each octet must be 0-255
+            if ipv4_re.is_match(target) {
+                let valid_octets = target.split('.').all(|o| o.parse::<u16>().is_ok_and(|n| n <= 255));
+                if !valid_octets {
+                    return Err(anyhow::anyhow!("Invalid IP address: octets must be 0-255."));
+                }
             }
         }
         TargetType::Email => {
@@ -360,8 +370,32 @@ pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<IpAddr>> {
                 Err(anyhow::anyhow!("DNS resolution failed for target: {}", e))
             }
         }
+    } else if target_type == TargetType::Email {
+        // For emails, resolve the domain part so domain plugins get a safe resolved_ip
+        if let Some(domain) = target.split('@').last() {
+            match tokio::net::lookup_host(format!("{}:80", domain)).await {
+                Ok(addrs) => {
+                    let all_addrs: Vec<_> = addrs.collect();
+                    if let Some(first) = all_addrs.first() {
+                        let ip = first.ip();
+                        let is_dangerous = match ip {
+                            IpAddr::V4(v4) => is_dangerous_ipv4(v4),
+                            IpAddr::V6(v6) => is_dangerous_ipv6(v6),
+                        };
+                        if is_dangerous {
+                            return Err(anyhow::anyhow!(
+                                "Email domain resolves to a private/reserved IP. Not allowed."
+                            ));
+                        }
+                        return Ok(Some(ip));
+                    }
+                }
+                Err(_) => {} // DNS failure for email domain is OK — plugins will handle gracefully
+            }
+        }
+        Ok(None)
     } else {
-        // Email/Username targets don't need DNS validation
+        // Username targets don't need DNS validation
         Ok(None)
     }
 }

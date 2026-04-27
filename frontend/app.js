@@ -153,13 +153,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!statusRes.ok) throw new Error('Failed to fetch status');
             const statusData = await statusRes.json();
 
-            statusText.innerText = statusData.status;
+            const status = statusData.status.toLowerCase();
+            statusText.innerText = status;
 
-            if (statusData.status === 'completed' || statusData.status === 'failed') {
+            if (status === 'completed' || status === 'failed') {
                 clearInterval(pollInterval);
                 loader.style.display = 'none';
                 scanBtn.disabled = false;
-                statusText.style.color = statusData.status === 'completed' ? '#3fb950' : '#f85149';
+                statusText.style.color = status === 'completed' ? '#3fb950' : '#f85149';
             }
 
             const resultsRes = await fetch(`/api/scans/${currentScanId}/results`, {

@@ -22,7 +22,8 @@ impl Plugin for TechStackPlugin {
     async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
-            _ => return Ok(()),
+            TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
+            TargetType::Username => return Ok(()),
         };
 
         info!(plugin = "tech_stack", domain = %domain, "Detecting technology stack");

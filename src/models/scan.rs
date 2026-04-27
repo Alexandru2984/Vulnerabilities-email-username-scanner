@@ -14,6 +14,7 @@ pub struct Scan {
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq)]
 #[sqlx(type_name = "VARCHAR", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum ScanStatus {
     Running,
     Completed,

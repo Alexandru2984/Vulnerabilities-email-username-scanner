@@ -23,7 +23,8 @@ impl Plugin for HttpPlugin {
     async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
-            _ => return Ok(()), // Only run on domains
+            TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
+            TargetType::Username => return Ok(()),
         };
 
         info!(plugin = "http_probe", domain = %domain, "Probing HTTP/HTTPS");

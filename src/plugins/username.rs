@@ -42,6 +42,7 @@ impl Plugin for UsernameFootprintPlugin {
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .danger_accept_invalid_certs(true) // Many Sherlock sites have self-signed/expired certs
             .build()?;
 
         let client = Arc::new(client);

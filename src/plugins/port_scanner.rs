@@ -21,7 +21,8 @@ impl Plugin for PortScannerPlugin {
     async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
-            _ => return Ok(()),
+            TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
+            TargetType::Username => return Ok(()),
         };
 
         // CRITICAL: Use the resolved IP directly to prevent DNS rebinding TOCTOU.
