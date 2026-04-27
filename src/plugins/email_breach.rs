@@ -22,35 +22,35 @@ impl Plugin for EmailBreachPlugin {
         "email_breach_xon"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(&self, scan_id: Uuid, target: &str, _resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let email = match target_type {
             TargetType::Email => target.to_string(),
             _ => return Ok(()), // Only run on emails
         };
 
-        info!("Running EmailBreachPlugin for {}", email);
+        info!(plugin = "email_breach", email = %email, "Checking breach databases");
         
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .build()?;
 
-        let url = format!("https://api.xposedornot.com/v1/check-email/{}", email);
+        // URL-encode the email for safe query
+        let encoded_email = urlencoding::encode(&email);
+        let url = format!("https://api.xposedornot.com/v1/check-email/{}", encoded_email);
         let res = client.get(&url).send().await?;
 
-        if res.status() == 404 {
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
             // Not found in any breaches, which is good
             return Ok(());
         }
 
         if !res.status().is_success() {
-            warn!("XposedOrNot API returned status: {}", res.status());
+            warn!(status = %res.status(), "XposedOrNot API returned non-success status");
             return Ok(());
         }
 
-        if let Ok(data) = res.json::<XonResponse>().await {
-            if let Some(breaches_array) = data.breaches {
-                // The API returns an array of arrays of strings for some reason.
-                // Usually `breaches: [["Breach1", "Breach2"]]`
+        if let Ok(data) = res.json::<XonResponse>().await
+            && let Some(breaches_array) = data.breaches {
                 let mut flat_breaches = Vec::new();
                 for breach_list in breaches_array {
                     flat_breaches.extend(breach_list);
@@ -73,7 +73,6 @@ impl Plugin for EmailBreachPlugin {
                     let _ = out_chan.send(finding).await;
                 }
             }
-        }
 
         Ok(())
     }

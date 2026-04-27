@@ -13,33 +13,48 @@
             <p>Passive Reconnaissance System</p>
         </header>
 
-        <section class="scan-form">
-            <input type="text" id="target" placeholder="Enter target (e.g., example.com)" autocomplete="off">
-            <button id="scan-btn">Start Scan</button>
-        </section>
-
-        <section id="status-container" class="hidden">
-            <h2>Status: <span id="scan-status">Starting...</span></h2>
-            <div class="loader" id="loader"></div>
-        </section>
-
-        <section id="results-container" class="hidden">
-            <h2>Findings</h2>
-            <div class="table-wrapper">
-                <table id="results-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Plugin</th>
-                            <th>Type</th>
-                            <th>Data</th>
-                        </tr>
-                    </thead>
-                    <tbody id="results-body">
-                        <!-- Findings will be injected here -->
-                    </tbody>
-                </table>
+        <section id="auth-section" class="auth-section">
+            <div class="auth-card">
+                <h2>🔑 Authentication</h2>
+                <p>Enter your API key to access the scanner.</p>
+                <div class="auth-form">
+                    <input type="password" id="api-key-input" placeholder="Enter API Key" autocomplete="off">
+                    <button id="auth-btn">Authenticate</button>
+                </div>
+                <p id="auth-error" class="error-text hidden"></p>
             </div>
+        </section>
+
+        <section id="scan-section" class="hidden">
+            <div class="scan-form">
+                <input type="text" id="target" placeholder="Enter target (e.g., example.com)" autocomplete="off">
+                <button id="scan-btn">Start Scan</button>
+                <button id="logout-btn" class="logout-btn" title="Logout">🔓</button>
+            </div>
+
+            <section id="status-container" class="hidden">
+                <h2>Status: <span id="scan-status">Starting...</span></h2>
+                <div class="loader" id="loader"></div>
+            </section>
+
+            <section id="results-container" class="hidden">
+                <h2>Findings</h2>
+                <div class="table-wrapper">
+                    <table id="results-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Plugin</th>
+                                <th>Type</th>
+                                <th>Severity</th>
+                                <th>Data</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-body">
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         </section>
     </div>
     <script src="/app.js"></script>

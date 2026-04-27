@@ -30,25 +30,22 @@ impl Plugin for UsernameFootprintPlugin {
         "username_footprint"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(&self, scan_id: Uuid, target: &str, _resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let username = match target_type {
             TargetType::Username => target.to_string(),
             TargetType::Email => target.split('@').next().unwrap_or(target).to_string(),
             TargetType::Domain => return Ok(()),
         };
 
-        info!("Running Sherlock Username Engine for {}", username);
+        info!(plugin = "username_footprint", username = %username, "Running Sherlock username engine");
         
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            // Do not follow redirects by default for strict status_code checking, 
-            // but some sites require it. Sherlock follows redirects, so we will too.
             .build()?;
 
         let client = Arc::new(client);
 
-        // Parse database flexibly to ignore $schema and other metadata
         let parsed_json: serde_json::Value = match serde_json::from_str(SHERLOCK_DATA) {
             Ok(data) => data,
             Err(e) => {
@@ -66,17 +63,14 @@ impl Plugin for UsernameFootprintPlugin {
             }
         }
 
-        // Filter for sites we can easily check (status_code is the most reliable for our simple engine)
-        // You could add "message" parsing later, but "status_code" covers hundreds of sites.
         let status_code_sites: Vec<(&String, &SherlockSite)> = sites.iter()
             .filter(|(_, site)| site.error_type == "status_code")
             .collect();
 
-        info!("Loaded {} sites for checking", status_code_sites.len());
+        info!(count = status_code_sites.len(), "Loaded sites for checking");
 
         let mut tasks = Vec::new();
         for (site_name, site_data) in status_code_sites {
-            // Replace {} with username
             let url = site_data.url.replace("{}", &username);
             let site_name = site_name.clone();
             let client = client.clone();
@@ -84,9 +78,8 @@ impl Plugin for UsernameFootprintPlugin {
             let username = username.clone();
             
             tasks.push(async move {
-                if let Ok(res) = client.get(&url).send().await {
-                    // status_code checking: 200 usually means user exists, 404 means it doesn't
-                    if res.status().is_success() {
+                if let Ok(res) = client.get(&url).send().await
+                    && res.status().is_success() {
                         let finding = Finding {
                             id: Uuid::new_v4(),
                             scan_id,
@@ -102,15 +95,11 @@ impl Plugin for UsernameFootprintPlugin {
                         };
                         let _ = out_chan.send(finding).await;
                     }
-                }
             });
         }
 
-        // Run concurrently with a limit of 50 active requests
         let mut stream = stream::iter(tasks).buffer_unordered(50);
-        while let Some(_) = stream.next().await {
-            // Task finished
-        }
+        while stream.next().await.is_some() {}
 
         Ok(())
     }

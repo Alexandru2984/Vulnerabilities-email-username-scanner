@@ -21,16 +21,18 @@ impl Plugin for CrtShPlugin {
         "subdomain_crtsh"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(&self, scan_id: Uuid, target: &str, _resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
-            TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
+            TargetType::Email => target.split('@').next_back().unwrap_or(target).to_string(),
             TargetType::Username => return Ok(()),
         };
 
-        info!("Running CrtShPlugin for domain {}", domain);
+        info!(plugin = "subdomain_crtsh", domain = %domain, "Querying Certificate Transparency logs");
         
-        let url = format!("https://crt.sh/?q={}&output=json", domain);
+        // URL-encode the domain to prevent query parameter injection
+        let encoded_domain = urlencoding::encode(&domain);
+        let url = format!("https://crt.sh/?q={}&output=json", encoded_domain);
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
@@ -38,7 +40,7 @@ impl Plugin for CrtShPlugin {
         let res = client.get(&url).send().await?;
         
         if !res.status().is_success() {
-            warn!("Crt.sh returned non-success status: {}", res.status());
+            warn!(status = %res.status(), "Crt.sh returned non-success status");
             return Ok(());
         }
 

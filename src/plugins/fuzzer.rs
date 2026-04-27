@@ -1,3 +1,4 @@
+use crate::core::read_body_limited;
 use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
 use async_trait::async_trait;
@@ -10,24 +11,27 @@ use std::time::Duration;
 
 pub struct FuzzerPlugin;
 
+/// Max body size for fuzzer responses (1 MB — sensitive files are small)
+const FUZZER_MAX_BODY: usize = 1024 * 1024;
+
 #[async_trait]
 impl Plugin for FuzzerPlugin {
     fn name(&self) -> &'static str {
         "sensitive_files_fuzzer"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             _ => return Ok(()),
         };
 
-        info!("Running FuzzerPlugin for {}", domain);
+        info!(plugin = "fuzzer", domain = %domain, "Fuzzing sensitive file paths");
         
         let client = Client::builder()
-            .timeout(Duration::from_secs(5)) // Fast timeout for fuzzing
-            .redirect(Policy::none()) // Don't follow redirects, we want true 200s
-            .danger_accept_invalid_certs(true)
+            .timeout(Duration::from_secs(5))
+            .redirect(Policy::none())
+            .danger_accept_invalid_certs(true) // Intentional for recon
             .build()?;
 
         // Common sensitive paths
@@ -42,24 +46,24 @@ impl Plugin for FuzzerPlugin {
         ];
 
         let mut exposed_files = Vec::new();
-        let base_url = format!("http://{}", domain); // Probing HTTP for speed, could do HTTPS
 
-        // This is a minimal, non-intrusive fuzzer. Runs sequentially for safety.
+        // Use resolved IP with Host header to prevent DNS rebinding TOCTOU
+        let base_url = if let Some(ip) = resolved_ip {
+            format!("http://{}", ip)
+        } else {
+            format!("http://{}", domain)
+        };
+
         for path in paths {
             let url = format!("{}{}", base_url, path);
-            if let Ok(res) = client.get(&url).send().await {
-                if res.status() == 200 {
-                    // Check if it's a real 200 or a soft 404 (custom error page returning 200)
-                    // A simple check is to read body length. If too long, might be the homepage.
-                    let content_length = res.headers().get("content-length")
-                        .and_then(|h| h.to_str().ok())
-                        .and_then(|s| s.parse::<usize>().ok())
-                        .unwrap_or(0);
-                    
-                    // Simple heuristic: Most sensitive files are relatively small (under 10KB usually, except swagger maybe)
-                    // If no content-length header, we read text.
-                    if let Ok(body) = res.text().await {
-                        // Avoid HTML homepages
+            let request = client.get(&url)
+                .header("Host", &domain); // Set Host header for virtual hosting
+
+            if let Ok(res) = request.send().await
+                && res.status() == reqwest::StatusCode::OK {
+                    // Read body with size limit
+                    if let Ok(body) = read_body_limited(res, FUZZER_MAX_BODY).await {
+                        // Avoid HTML homepages (soft 404s returning 200)
                         let is_html = body.to_lowercase().contains("<html");
                         
                         if !is_html || path.contains("swagger") {
@@ -67,7 +71,6 @@ impl Plugin for FuzzerPlugin {
                         }
                     }
                 }
-            }
         }
 
         if !exposed_files.is_empty() {
@@ -80,7 +83,7 @@ impl Plugin for FuzzerPlugin {
                     "target": domain,
                     "exposed_paths": exposed_files,
                 }),
-                severity: FindingSeverity::High, // Exposed files are usually high severity
+                severity: FindingSeverity::High,
                 created_at: Utc::now(),
             };
             let _ = out_chan.send(finding).await;

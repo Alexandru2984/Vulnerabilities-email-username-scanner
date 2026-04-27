@@ -9,6 +9,8 @@ pub mod fuzzer;
 pub mod http;
 pub mod ip_info;
 pub mod port_scanner;
+pub mod robots_txt;
+pub mod security_headers;
 pub mod subdomain;
 pub mod tech_stack;
 pub mod username;
@@ -25,7 +27,10 @@ pub trait Plugin: Send + Sync {
     /// Name of the plugin
     fn name(&self) -> &'static str;
 
-    /// Runs the plugin against a target and streams findings to the channel
+    /// Runs the plugin against a target and streams findings to the channel.
+    /// `resolved_ip` is the DNS-resolved IP from SSRF validation — plugins MUST use
+    /// this IP for network connections instead of re-resolving the domain to prevent
+    /// DNS rebinding TOCTOU attacks.
     async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()>;
 }
 
@@ -41,5 +46,7 @@ pub fn get_all_plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(ip_info::IpInfoPlugin),
         Box::new(tech_stack::TechStackPlugin),
         Box::new(fuzzer::FuzzerPlugin),
+        Box::new(security_headers::SecurityHeadersPlugin),
+        Box::new(robots_txt::RobotsTxtPlugin),
     ]
 }

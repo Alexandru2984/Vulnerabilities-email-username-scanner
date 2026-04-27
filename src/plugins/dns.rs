@@ -5,7 +5,7 @@ use hickory_resolver::{TokioAsyncResolver, config::*};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use chrono::Utc;
-use tracing::{info, warn};
+use tracing::info;
 
 pub struct DnsPlugin;
 
@@ -18,11 +18,11 @@ impl Plugin for DnsPlugin {
     async fn run(&self, scan_id: Uuid, target: &str, _resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
-            TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
+            TargetType::Email => target.split('@').next_back().unwrap_or(target).to_string(),
             TargetType::Username => return Ok(()),
         };
 
-        info!("Running DnsPlugin for domain {}", domain);
+        info!(plugin = "dns_info", domain = %domain, "Running DNS lookup");
         
         let resolver = TokioAsyncResolver::tokio(
             ResolverConfig::default(),
@@ -33,7 +33,7 @@ impl Plugin for DnsPlugin {
         if let Ok(lookup) = resolver.ipv4_lookup(domain.as_str()).await {
             let ips: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
             if !ips.is_empty() {
-                self.send_finding(scan_id, &domain, "A_record", serde_json::json!({ "ips": ips }), out_chan.clone()).await;
+                self.send_finding(scan_id, "A_record", serde_json::json!({ "ips": ips }), out_chan.clone()).await;
             }
         }
 
@@ -41,7 +41,7 @@ impl Plugin for DnsPlugin {
         if let Ok(lookup) = resolver.ipv6_lookup(domain.as_str()).await {
             let ips: Vec<String> = lookup.iter().map(|ip| ip.to_string()).collect();
             if !ips.is_empty() {
-                self.send_finding(scan_id, &domain, "AAAA_record", serde_json::json!({ "ips": ips }), out_chan.clone()).await;
+                self.send_finding(scan_id, "AAAA_record", serde_json::json!({ "ips": ips }), out_chan.clone()).await;
             }
         }
 
@@ -49,7 +49,7 @@ impl Plugin for DnsPlugin {
         if let Ok(lookup) = resolver.mx_lookup(domain.as_str()).await {
             let mxs: Vec<String> = lookup.iter().map(|mx| mx.exchange().to_string()).collect();
             if !mxs.is_empty() {
-                self.send_finding(scan_id, &domain, "MX_record", serde_json::json!({ "exchanges": mxs }), out_chan.clone()).await;
+                self.send_finding(scan_id, "MX_record", serde_json::json!({ "exchanges": mxs }), out_chan.clone()).await;
             }
         }
 
@@ -57,7 +57,7 @@ impl Plugin for DnsPlugin {
         if let Ok(lookup) = resolver.txt_lookup(domain.as_str()).await {
             let txts: Vec<String> = lookup.iter().map(|txt| txt.to_string()).collect();
             if !txts.is_empty() {
-                self.send_finding(scan_id, &domain, "TXT_record", serde_json::json!({ "texts": txts }), out_chan.clone()).await;
+                self.send_finding(scan_id, "TXT_record", serde_json::json!({ "texts": txts }), out_chan.clone()).await;
             }
         }
 
@@ -66,7 +66,7 @@ impl Plugin for DnsPlugin {
 }
 
 impl DnsPlugin {
-    async fn send_finding(&self, scan_id: Uuid, target: &str, finding_type: &str, data: serde_json::Value, out_chan: mpsc::Sender<Finding>) {
+    async fn send_finding(&self, scan_id: Uuid, finding_type: &str, data: serde_json::Value, out_chan: mpsc::Sender<Finding>) {
         let finding = Finding {
             id: Uuid::new_v4(),
             scan_id,

@@ -1,3 +1,4 @@
+use crate::core::read_body_limited;
 use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
 use async_trait::async_trait;
@@ -10,19 +11,21 @@ use std::time::Duration;
 
 pub struct TechStackPlugin;
 
+const TECH_MAX_BODY: usize = 2 * 1024 * 1024;
+
 #[async_trait]
 impl Plugin for TechStackPlugin {
     fn name(&self) -> &'static str {
         "tech_stack_detector"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             _ => return Ok(()),
         };
 
-        info!("Running TechStackPlugin for {}", domain);
+        info!(plugin = "tech_stack", domain = %domain, "Detecting technology stack");
         
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
@@ -30,14 +33,20 @@ impl Plugin for TechStackPlugin {
             .danger_accept_invalid_certs(true)
             .build()?;
 
+        let host_target = if let Some(ip) = resolved_ip {
+            ip.to_string()
+        } else {
+            domain.clone()
+        };
+
         let schemes = vec!["http", "https"];
         let mut detected_tech = Vec::new();
 
         for scheme in schemes {
-            let url = format!("{}://{}", scheme, domain);
-            if let Ok(res) = client.get(&url).send().await {
-                
-                // Analyze Headers
+            let url = format!("{}://{}", scheme, host_target);
+            let request = client.get(&url).header("Host", &domain);
+
+            if let Ok(res) = request.send().await {
                 if let Some(server) = res.headers().get("server") {
                     let s = server.to_str().unwrap_or("").to_lowercase();
                     if s.contains("nginx") { detected_tech.push("Nginx".to_string()); }
@@ -52,19 +61,14 @@ impl Plugin for TechStackPlugin {
                     if xp.contains("asp.net") { detected_tech.push("ASP.NET".to_string()); }
                 }
 
-                // Analyze Body
-                if let Ok(body) = res.text().await {
+                if let Ok(body) = read_body_limited(res, TECH_MAX_BODY).await {
                     let b_lower = body.to_lowercase();
-                    
-                    // CMS Detection
                     if b_lower.contains("wp-content") || b_lower.contains("wp-includes") {
                         detected_tech.push("WordPress".to_string());
                     }
-                    if b_lower.contains("Joomla") {
+                    if b_lower.contains("joomla") {
                         detected_tech.push("Joomla".to_string());
                     }
-                    
-                    // Frontend Frameworks
                     if b_lower.contains("data-reactroot") || b_lower.contains("_react") {
                         detected_tech.push("React".to_string());
                     }
@@ -89,15 +93,13 @@ impl Plugin for TechStackPlugin {
                         plugin_name: self.name().to_string(),
                         finding_type: "tech_stack".to_string(),
                         data: serde_json::json!({
-                            "url": url,
+                            "url": format!("{}://{}", scheme, domain),
                             "technologies": detected_tech,
                         }),
                         severity: FindingSeverity::Info,
                         created_at: Utc::now(),
                     };
                     let _ = out_chan.send(finding).await;
-                    
-                    // Break after first successful scheme to avoid duplicates
                     break;
                 }
             }

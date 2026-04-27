@@ -16,22 +16,31 @@ impl Plugin for IpInfoPlugin {
         "ip_info"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
-            _ => return Ok(()), // Only run on domains or IPs
+            _ => return Ok(()),
         };
 
-        info!("Running IpInfoPlugin for {}", domain);
+        info!(plugin = "ip_info", domain = %domain, "Fetching IP intelligence");
         
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
 
-        let url = format!("http://ip-api.com/json/{}", domain);
-        if let Ok(res) = client.get(&url).send().await {
-            if let Ok(data) = res.json::<serde_json::Value>().await {
-                if data.get("status").and_then(|s| s.as_str()) == Some("success") {
+        // Use resolved IP if available (more accurate + prevents DNS rebinding)
+        let query_target = if let Some(ip) = resolved_ip {
+            ip.to_string()
+        } else {
+            domain.clone()
+        };
+
+        // Note: ip-api.com free tier does not support HTTPS — using HTTP with awareness.
+        // For production, consider ipapi.co (HTTPS) or a paid ip-api.com plan.
+        let url = format!("http://ip-api.com/json/{}", query_target);
+        if let Ok(res) = client.get(&url).send().await
+            && let Ok(data) = res.json::<serde_json::Value>().await
+                && data.get("status").and_then(|s| s.as_str()) == Some("success") {
                     let finding = Finding {
                         id: Uuid::new_v4(),
                         scan_id,
@@ -43,8 +52,6 @@ impl Plugin for IpInfoPlugin {
                     };
                     let _ = out_chan.send(finding).await;
                 }
-            }
-        }
 
         Ok(())
     }

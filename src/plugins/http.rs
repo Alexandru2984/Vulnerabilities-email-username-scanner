@@ -1,3 +1,4 @@
+use crate::core::read_body_limited;
 use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
 use async_trait::async_trait;
@@ -5,10 +6,13 @@ use reqwest::{Client, redirect::Policy};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use chrono::Utc;
-use tracing::{info, warn};
+use tracing::info;
 use std::time::Duration;
 
 pub struct HttpPlugin;
+
+/// Max body to read for title extraction (2 MB)
+const HTTP_MAX_BODY: usize = 2 * 1024 * 1024;
 
 #[async_trait]
 impl Plugin for HttpPlugin {
@@ -16,26 +20,35 @@ impl Plugin for HttpPlugin {
         "http_probe"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             _ => return Ok(()), // Only run on domains
         };
 
-        info!("Running HttpPlugin for domain {}", domain);
+        info!(plugin = "http_probe", domain = %domain, "Probing HTTP/HTTPS");
         
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .redirect(Policy::none()) // Prevent SSRF via redirect
-            .danger_accept_invalid_certs(true) // For bug bounty recon, accept invalid certs
+            .danger_accept_invalid_certs(true) // Intentional for recon — accept invalid certs
             .build()?;
 
-        // Try HTTP and HTTPS
+        // Use resolved IP to prevent DNS rebinding TOCTOU
+        let host_target = if let Some(ip) = resolved_ip {
+            ip.to_string()
+        } else {
+            domain.clone()
+        };
+
         let schemes = vec!["http", "https"];
         
         for scheme in schemes {
-            let url = format!("{}://{}", scheme, domain);
-            if let Ok(res) = client.get(&url).send().await {
+            let url = format!("{}://{}", scheme, host_target);
+            let request = client.get(&url)
+                .header("Host", &domain); // Host header for virtual hosting
+
+            if let Ok(res) = request.send().await {
                 let status = res.status().as_u16();
                 
                 // Extract interesting headers
@@ -53,15 +66,13 @@ impl Plugin for HttpPlugin {
                     waf = "Imperva".to_string();
                 }
 
-                // Read a bit of body for title extraction
+                // Read body with size limit for title extraction
                 let mut title = String::new();
-                if let Ok(body) = res.text().await {
-                    if let Some(start) = body.find("<title>") {
-                        if let Some(end) = body[start..].find("</title>") {
+                if let Ok(body) = read_body_limited(res, HTTP_MAX_BODY).await
+                    && let Some(start) = body.find("<title>")
+                        && let Some(end) = body[start..].find("</title>") {
                             title = body[start + 7..start + end].to_string();
                         }
-                    }
-                }
 
                 let finding = Finding {
                     id: Uuid::new_v4(),
@@ -69,7 +80,7 @@ impl Plugin for HttpPlugin {
                     plugin_name: self.name().to_string(),
                     finding_type: "http_response".to_string(),
                     data: serde_json::json!({
-                        "url": url,
+                        "url": format!("{}://{}", scheme, domain),
                         "status": status,
                         "server": server,
                         "x_powered_by": x_powered_by,
