@@ -55,6 +55,11 @@ defaults to `3` and prevents unbounded background scan workers.
 cargo run
 ```
 
+Before deploying with Docker Compose, run:
+```bash
+./scripts/preflight.sh
+```
+
 #### 4. Access the Dashboard
 Open your browser and navigate to:
 ```
@@ -99,6 +104,7 @@ Enter your API key, then input a target (e.g., `example.com`) and start scanning
 - Generate both `API_KEY` and `POSTGRES_PASSWORD` with strong random values.
 - Use `/api/health` for liveness and `/api/ready` for readiness/DB checks.
 - Keep `target/` out of deploy/build contexts; `.dockerignore` excludes Rust build artifacts and local secrets.
+- See `docs/PRODUCTION.md` and `deploy/nginx-cloudflare.conf.example` for VPS deployment notes.
 
 ## API Endpoints
 
