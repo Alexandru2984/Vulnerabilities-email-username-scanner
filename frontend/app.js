@@ -29,7 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let allFindings = [];
 
     // ─── Check existing session ───
-    if (sessionStorage.getItem('api_key')) showScanUI();
+    const storedApiKey = sessionStorage.getItem('api_key');
+    if (storedApiKey) validateStoredSession(storedApiKey);
 
     // ─── Target type icon detection ───
     targetInput.addEventListener('input', () => {
@@ -49,10 +50,11 @@ document.addEventListener('DOMContentLoaded', () => {
         authBtn.querySelector('span').textContent = 'Verifying...';
 
         try {
-            const res = await fetch('/api/scans/00000000-0000-0000-0000-000000000000', {
+            const res = await fetch('/api/auth/check', {
                 headers: { 'X-API-Key': key }
             });
             if (res.status === 401) return showAuthError('Invalid API key.');
+            if (!res.ok) return showAuthError('Authentication check failed.');
             sessionStorage.setItem('api_key', key);
             showScanUI();
         } catch {
@@ -82,6 +84,21 @@ document.addEventListener('DOMContentLoaded', () => {
     function showScanUI() {
         authSection.classList.add('hidden');
         scanSection.classList.remove('hidden');
+    }
+
+    async function validateStoredSession(key) {
+        try {
+            const res = await fetch('/api/auth/check', {
+                headers: { 'X-API-Key': key }
+            });
+            if (res.ok) {
+                showScanUI();
+                return;
+            }
+        } catch {
+            // Keep the login screen visible on connection errors.
+        }
+        sessionStorage.removeItem('api_key');
     }
 
     function headers() {

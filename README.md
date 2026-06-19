@@ -129,6 +129,7 @@ CARGO_TARGET_DIR=/tmp/recon-cargo-target cargo test --locked
 |---|---|---|---|
 | `GET` | `/api/health` | No | Health check |
 | `GET` | `/api/ready` | No | Readiness check, including database |
+| `GET` | `/api/auth/check` | Yes | Validate API key |
 | `POST` | `/api/scan` | Yes | Start a new scan |
 | `GET` | `/api/scans/{id}` | Yes | Get scan status |
 | `GET` | `/api/scans/{id}/results` | Yes | Get scan findings |

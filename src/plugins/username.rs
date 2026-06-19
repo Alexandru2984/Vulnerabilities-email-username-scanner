@@ -3,7 +3,7 @@ use crate::models::{Finding, FindingSeverity};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
-use reqwest::Client;
+use reqwest::{Client, redirect::Policy};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -88,8 +88,7 @@ impl Plugin for UsernameFootprintPlugin {
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            .danger_accept_invalid_certs(true)
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(Policy::none())
             .build()?;
 
         let client = Arc::new(client);

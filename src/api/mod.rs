@@ -58,6 +58,11 @@ struct ReadyResponse {
 }
 
 #[derive(Serialize)]
+struct AuthCheckResponse {
+    authenticated: bool,
+}
+
+#[derive(Serialize)]
 struct ErrorResponse {
     error: String,
 }
@@ -80,6 +85,7 @@ pub fn create_router(pool: PgPool) -> Router {
 
     // Protected API routes (require API key)
     let protected_routes = Router::new()
+        .route("/auth/check", get(auth_check))
         .route("/scan", post(start_scan))
         .route("/scans/{id}", get(get_scan_status))
         .route("/scans/{id}/results", get(get_scan_results))
@@ -137,6 +143,12 @@ async fn auth_middleware(
         )
             .into_response(),
     }
+}
+
+async fn auth_check() -> Json<AuthCheckResponse> {
+    Json(AuthCheckResponse {
+        authenticated: true,
+    })
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
