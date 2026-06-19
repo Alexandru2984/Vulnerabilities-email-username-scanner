@@ -30,7 +30,7 @@ impl Plugin for FuzzerPlugin {
     ) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
-            TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
+            TargetType::Email => target.split('@').next_back().unwrap_or(target).to_string(),
             TargetType::Username => return Ok(()),
         };
 

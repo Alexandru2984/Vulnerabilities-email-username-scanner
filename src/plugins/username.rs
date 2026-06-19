@@ -194,14 +194,13 @@ impl Plugin for UsernameFootprintPlugin {
                 // Check 2: Probe-based false positive detection
                 // If the probe (non-existent user) also got 200 with similar body size,
                 // this site returns 200 for everyone → skip it
-                if let Some(baseline) = &probe_baseline {
-                    if baseline.status == status {
-                        let size_diff =
-                            (body.len() as i64 - baseline.body_len as i64).unsigned_abs();
-                        let threshold = (baseline.body_len as f64 * 0.05) as u64; // 5% tolerance
-                        if size_diff <= threshold.max(200) {
-                            return; // Same response as non-existent user → false positive
-                        }
+                if let Some(baseline) = &probe_baseline
+                    && baseline.status == status
+                {
+                    let size_diff = (body.len() as i64 - baseline.body_len as i64).unsigned_abs();
+                    let threshold = (baseline.body_len as f64 * 0.05) as u64; // 5% tolerance
+                    if size_diff <= threshold.max(200) {
+                        return; // Same response as non-existent user → false positive
                     }
                 }
 
@@ -213,10 +212,10 @@ impl Plugin for UsernameFootprintPlugin {
                 }
 
                 // Check 4: If site provides an error message pattern, check for it
-                if let Some(ref err_msg) = error_msg {
-                    if body_lower.contains(&err_msg.to_lowercase()) {
-                        return; // Error message found in body
-                    }
+                if let Some(ref err_msg) = error_msg
+                    && body_lower.contains(&err_msg.to_lowercase())
+                {
+                    return; // Error message found in body
                 }
 
                 // Check 5: Body must have some substance (not just a redirect page or empty)

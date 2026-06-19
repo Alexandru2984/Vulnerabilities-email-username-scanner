@@ -106,6 +106,22 @@ Enter your API key, then input a target (e.g., `example.com`) and start scanning
 - Keep `target/` out of deploy/build contexts; `.dockerignore` excludes Rust build artifacts and local secrets.
 - See `docs/PRODUCTION.md` and `deploy/nginx-cloudflare.conf.example` for VPS deployment notes.
 
+## Quality Gates
+
+Local checks mirror CI:
+
+```bash
+make check
+POSTGRES_PASSWORD=dummy docker compose config
+```
+
+`make check` creates a temporary Cargo target directory under `/tmp` and removes it when the checks finish. For one-off Rust checks, you can still choose an explicit target directory:
+
+```bash
+CARGO_TARGET_DIR=/tmp/recon-cargo-target cargo clippy --locked --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/recon-cargo-target cargo test --locked
+```
+
 ## API Endpoints
 
 | Method | Endpoint | Auth | Description |

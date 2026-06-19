@@ -453,19 +453,16 @@ pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<IpAddr>> {
         }
     } else if target_type == TargetType::Email {
         // For emails, resolve the domain part so domain plugins get a safe resolved_ip
-        if let Some(domain) = target.split('@').last() {
-            match tokio::net::lookup_host(format!("{}:80", domain)).await {
-                Ok(addrs) => {
-                    let all_addrs: Vec<_> = addrs.collect();
-                    if !all_addrs.is_empty() {
-                        validate_resolved_addrs(
-                            &all_addrs,
-                            "Email domain resolves to a private/reserved IP. Not allowed.",
-                        )?;
-                        return Ok(Some(all_addrs[0].ip()));
-                    }
-                }
-                Err(_) => {} // DNS failure for email domain is OK — plugins will handle gracefully
+        if let Some(domain) = target.split('@').next_back()
+            && let Ok(addrs) = tokio::net::lookup_host(format!("{}:80", domain)).await
+        {
+            let all_addrs: Vec<_> = addrs.collect();
+            if !all_addrs.is_empty() {
+                validate_resolved_addrs(
+                    &all_addrs,
+                    "Email domain resolves to a private/reserved IP. Not allowed.",
+                )?;
+                return Ok(Some(all_addrs[0].ip()));
             }
         }
         Ok(None)

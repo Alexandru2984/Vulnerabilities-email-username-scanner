@@ -26,6 +26,15 @@ Run:
 
 The script validates required secrets and `docker compose config` without printing secret values.
 
+Before shipping code changes, run:
+
+```bash
+make check
+```
+
+`make check` runs formatting, clippy with warnings denied, tests, dependency audit, and Compose validation.
+It uses a temporary Cargo target directory under `/tmp` and removes it on completion when `CARGO_TARGET_DIR` is not already set.
+
 ## Deploy
 
 ```bash
