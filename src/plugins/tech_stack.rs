@@ -1,13 +1,13 @@
+use super::{Plugin, TargetType};
 use crate::core::read_body_limited;
 use crate::models::{Finding, FindingSeverity};
-use super::{Plugin, TargetType};
 use async_trait::async_trait;
-use reqwest::{Client, redirect::Policy};
-use tokio::sync::mpsc;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::info;
+use reqwest::{Client, redirect::Policy};
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::info;
+use uuid::Uuid;
 
 pub struct TechStackPlugin;
 
@@ -19,7 +19,14 @@ impl Plugin for TechStackPlugin {
         "tech_stack_detector"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
@@ -27,7 +34,7 @@ impl Plugin for TechStackPlugin {
         };
 
         info!(plugin = "tech_stack", domain = %domain, "Detecting technology stack");
-        
+
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .redirect(Policy::none())
@@ -50,16 +57,28 @@ impl Plugin for TechStackPlugin {
             if let Ok(res) = request.send().await {
                 if let Some(server) = res.headers().get("server") {
                     let s = server.to_str().unwrap_or("").to_lowercase();
-                    if s.contains("nginx") { detected_tech.push("Nginx".to_string()); }
-                    if s.contains("apache") { detected_tech.push("Apache".to_string()); }
-                    if s.contains("iis") { detected_tech.push("IIS".to_string()); }
+                    if s.contains("nginx") {
+                        detected_tech.push("Nginx".to_string());
+                    }
+                    if s.contains("apache") {
+                        detected_tech.push("Apache".to_string());
+                    }
+                    if s.contains("iis") {
+                        detected_tech.push("IIS".to_string());
+                    }
                 }
 
                 if let Some(x_powered_by) = res.headers().get("x-powered-by") {
                     let xp = x_powered_by.to_str().unwrap_or("").to_lowercase();
-                    if xp.contains("php") { detected_tech.push("PHP".to_string()); }
-                    if xp.contains("express") { detected_tech.push("Express.js".to_string()); }
-                    if xp.contains("asp.net") { detected_tech.push("ASP.NET".to_string()); }
+                    if xp.contains("php") {
+                        detected_tech.push("PHP".to_string());
+                    }
+                    if xp.contains("express") {
+                        detected_tech.push("Express.js".to_string());
+                    }
+                    if xp.contains("asp.net") {
+                        detected_tech.push("ASP.NET".to_string());
+                    }
                 }
 
                 if let Ok(body) = read_body_limited(res, TECH_MAX_BODY).await {

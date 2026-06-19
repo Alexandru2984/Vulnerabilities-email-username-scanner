@@ -1,12 +1,12 @@
-use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
+use crate::models::{Finding, FindingSeverity};
 use async_trait::async_trait;
-use serde::Deserialize;
-use tokio::sync::mpsc;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::{info, warn};
+use serde::Deserialize;
 use std::collections::HashSet;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+use uuid::Uuid;
 
 pub struct CrtShPlugin;
 
@@ -21,7 +21,14 @@ impl Plugin for CrtShPlugin {
         "subdomain_crtsh"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, _resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        _resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             TargetType::Email => target.split('@').next_back().unwrap_or(target).to_string(),
@@ -29,7 +36,7 @@ impl Plugin for CrtShPlugin {
         };
 
         info!(plugin = "subdomain_crtsh", domain = %domain, "Querying Certificate Transparency logs");
-        
+
         // URL-encode the domain to prevent query parameter injection
         let encoded_domain = urlencoding::encode(&domain);
         let url = format!("https://crt.sh/?q={}&output=json", encoded_domain);
@@ -38,7 +45,7 @@ impl Plugin for CrtShPlugin {
             .build()?;
 
         let res = client.get(&url).send().await?;
-        
+
         if !res.status().is_success() {
             warn!(status = %res.status(), "Crt.sh returned non-success status");
             return Ok(());
@@ -66,7 +73,7 @@ impl Plugin for CrtShPlugin {
                 severity: FindingSeverity::Info,
                 created_at: Utc::now(),
             };
-            
+
             if out_chan.send(finding).await.is_err() {
                 break; // Receiver dropped
             }

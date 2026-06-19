@@ -31,7 +31,14 @@ pub trait Plugin: Send + Sync {
     /// `resolved_ip` is the DNS-resolved IP from SSRF validation — plugins MUST use
     /// this IP for network connections instead of re-resolving the domain to prevent
     /// DNS rebinding TOCTOU attacks.
-    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()>;
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()>;
 }
 
 /// Helper function to register all available plugins

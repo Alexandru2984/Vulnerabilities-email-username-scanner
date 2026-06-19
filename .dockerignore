@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+target
+**/target
+secrets
+*.pem
+*.key
+*.crt
+*.log
+tmp
+dist
+node_modules

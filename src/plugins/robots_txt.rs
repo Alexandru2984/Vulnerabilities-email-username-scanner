@@ -1,22 +1,39 @@
-use crate::core::{read_body_limited, MAX_BODY_SIZE};
-use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
+use crate::core::{MAX_BODY_SIZE, read_body_limited};
+use crate::models::{Finding, FindingSeverity};
 use async_trait::async_trait;
-use reqwest::{Client, redirect::Policy};
-use tokio::sync::mpsc;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::info;
+use reqwest::{Client, redirect::Policy};
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::info;
+use uuid::Uuid;
 
 pub struct RobotsTxtPlugin;
 
 /// Interesting path patterns that suggest hidden functionality
 const INTERESTING_PATTERNS: &[&str] = &[
-    "admin", "api", "login", "dashboard", "config", "backup",
-    "debug", "test", "staging", "internal", "private", "secret",
-    "wp-admin", "phpmyadmin", "cgi-bin", ".env", ".git",
-    "graphql", "swagger", "docs", "console",
+    "admin",
+    "api",
+    "login",
+    "dashboard",
+    "config",
+    "backup",
+    "debug",
+    "test",
+    "staging",
+    "internal",
+    "private",
+    "secret",
+    "wp-admin",
+    "phpmyadmin",
+    "cgi-bin",
+    ".env",
+    ".git",
+    "graphql",
+    "swagger",
+    "docs",
+    "console",
 ];
 
 #[async_trait]
@@ -25,7 +42,14 @@ impl Plugin for RobotsTxtPlugin {
         "robots_txt"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
@@ -36,7 +60,7 @@ impl Plugin for RobotsTxtPlugin {
 
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
-            .redirect(Policy::limited(3))
+            .redirect(Policy::none())
             .danger_accept_invalid_certs(true)
             .build()?;
 
@@ -56,14 +80,18 @@ impl Plugin for RobotsTxtPlugin {
 
             if let Ok(res) = request.send().await
                 && res.status().is_success()
-                    && let Ok(text) = read_body_limited(res, MAX_BODY_SIZE).await {
-                        // Quick check: does it look like a robots.txt?
-                        let lower = text.to_lowercase();
-                        if lower.contains("user-agent") || lower.contains("disallow") || lower.contains("sitemap") {
-                            body = Some(text);
-                            break;
-                        }
-                    }
+                && let Ok(text) = read_body_limited(res, MAX_BODY_SIZE).await
+            {
+                // Quick check: does it look like a robots.txt?
+                let lower = text.to_lowercase();
+                if lower.contains("user-agent")
+                    || lower.contains("disallow")
+                    || lower.contains("sitemap")
+                {
+                    body = Some(text);
+                    break;
+                }
+            }
         }
 
         let body = match body {

@@ -1,12 +1,12 @@
 use crate::core::Engine;
 use crate::models::{Finding, Scan};
 use axum::{
-    extract::{Path, State, Request},
-    http::{StatusCode, HeaderMap},
+    Json, Router,
+    extract::{Path, Request, State},
+    http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -51,25 +51,27 @@ struct ErrorResponse {
 
 pub fn create_router(pool: PgPool) -> Router {
     let engine = Arc::new(Engine::new(pool.clone()));
-    
-    // Read API key from environment — required for production
-    let api_key = std::env::var("API_KEY").unwrap_or_else(|_| {
-        warn!("API_KEY not set! Using default key. Set API_KEY in .env for production.");
-        "changeme_generate_a_secure_key".to_string()
+
+    let api_key = std::env::var("API_KEY").expect("API_KEY must be set before creating the router");
+
+    let state = Arc::new(AppState {
+        engine,
+        pool,
+        api_key,
     });
 
-    let state = Arc::new(AppState { engine, pool, api_key });
-
     // Public routes (no auth)
-    let public_routes = Router::new()
-        .route("/health", get(health_check));
+    let public_routes = Router::new().route("/health", get(health_check));
 
     // Protected API routes (require API key)
     let protected_routes = Router::new()
         .route("/scan", post(start_scan))
         .route("/scans/{id}", get(get_scan_status))
         .route("/scans/{id}/results", get(get_scan_results))
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .layer(RequestBodyLimitLayer::new(1024)); // Max 1KB request body
 
     let api_routes = Router::new()
@@ -79,8 +81,8 @@ pub fn create_router(pool: PgPool) -> Router {
         .layer(ConcurrencyLimitLayer::new(10)); // Max 10 concurrent API requests
 
     // Serve frontend static files
-    let frontend_service = ServeDir::new("frontend")
-        .not_found_service(ServeFile::new("frontend/index.html"));
+    let frontend_service =
+        ServeDir::new("frontend").not_found_service(ServeFile::new("frontend/index.html"));
 
     Router::new()
         .nest("/api", api_routes)
@@ -98,21 +100,40 @@ async fn auth_middleware(
     next: Next,
 ) -> Response {
     match headers.get("x-api-key").and_then(|v| v.to_str().ok()) {
-        Some(key) if key == state.api_key => {
+        Some(key) if constant_time_eq(key.as_bytes(), state.api_key.as_bytes()) => {
             next.run(request).await
         }
         Some(_) => {
             warn!("Invalid API key provided");
-            (StatusCode::UNAUTHORIZED, Json(ErrorResponse {
-                error: "Invalid API key.".to_string(),
-            })).into_response()
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "Invalid API key.".to_string(),
+                }),
+            )
+                .into_response()
         }
-        None => {
-            (StatusCode::UNAUTHORIZED, Json(ErrorResponse {
+        None => (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
                 error: "Missing X-API-Key header.".to_string(),
-            })).into_response()
-        }
+            }),
+        )
+            .into_response(),
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let max_len = a.len().max(b.len());
+    let mut diff = a.len() ^ b.len();
+
+    for i in 0..max_len {
+        let left = a.get(i).copied().unwrap_or(0);
+        let right = b.get(i).copied().unwrap_or(0);
+        diff |= usize::from(left ^ right);
+    }
+
+    diff == 0
 }
 
 /// Health check endpoint — public, no auth required
@@ -129,9 +150,12 @@ async fn start_scan(
     Json(payload): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, Json<ErrorResponse>)> {
     if payload.target.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-            error: "Target cannot be empty.".to_string(),
-        })));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Target cannot be empty.".to_string(),
+            }),
+        ));
     }
 
     match state.engine.start_scan(payload.target.clone()).await {
@@ -142,16 +166,22 @@ async fn start_scan(
         Err(e) => {
             let msg = e.to_string();
             // Only expose validation errors to client, not internal details
-            if msg.contains("Target") || msg.contains("Invalid") || msg.contains("blocked") || msg.contains("not allowed") || msg.contains("DNS resolution") {
-                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
-                    error: msg,
-                })))
+            if msg.contains("Target")
+                || msg.contains("Invalid")
+                || msg.contains("blocked")
+                || msg.contains("not allowed")
+                || msg.contains("DNS resolution")
+            {
+                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })))
             } else {
                 // Log the real error, return generic message to client
                 error!("Internal error starting scan: {}", e);
-                Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-                    error: "An internal error occurred. Please try again later.".to_string(),
-                })))
+                Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "An internal error occurred. Please try again later.".to_string(),
+                    }),
+                ))
             }
         }
     }
@@ -174,16 +204,22 @@ async fn get_scan_status(
     .await
     .map_err(|e| {
         error!("Database error fetching scan status: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-            error: "An internal error occurred.".to_string(),
-        }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "An internal error occurred.".to_string(),
+            }),
+        )
     })?;
 
     match scan {
         Some(s) => Ok(Json(s)),
-        None => Err((StatusCode::NOT_FOUND, Json(ErrorResponse {
-            error: "Scan not found.".to_string(),
-        }))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: "Scan not found.".to_string(),
+            }),
+        )),
     }
 }
 
@@ -205,9 +241,12 @@ async fn get_scan_results(
     .await
     .map_err(|e| {
         error!("Database error fetching scan results: {}", e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse {
-            error: "An internal error occurred.".to_string(),
-        }))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "An internal error occurred.".to_string(),
+            }),
+        )
     })?;
 
     Ok(Json(findings))

@@ -1,13 +1,13 @@
+use super::{Plugin, TargetType};
 use crate::core::read_body_limited;
 use crate::models::{Finding, FindingSeverity};
-use super::{Plugin, TargetType};
 use async_trait::async_trait;
-use reqwest::{Client, redirect::Policy};
-use tokio::sync::mpsc;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::info;
+use reqwest::{Client, redirect::Policy};
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::info;
+use uuid::Uuid;
 
 pub struct FuzzerPlugin;
 
@@ -20,7 +20,14 @@ impl Plugin for FuzzerPlugin {
         "sensitive_files_fuzzer"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
@@ -28,7 +35,7 @@ impl Plugin for FuzzerPlugin {
         };
 
         info!(plugin = "fuzzer", domain = %domain, "Fuzzing sensitive file paths");
-        
+
         let client = Client::builder()
             .timeout(Duration::from_secs(5))
             .redirect(Policy::none())
@@ -57,21 +64,21 @@ impl Plugin for FuzzerPlugin {
 
         for path in paths {
             let url = format!("{}{}", base_url, path);
-            let request = client.get(&url)
-                .header("Host", &domain); // Set Host header for virtual hosting
+            let request = client.get(&url).header("Host", &domain); // Set Host header for virtual hosting
 
             if let Ok(res) = request.send().await
-                && res.status() == reqwest::StatusCode::OK {
-                    // Read body with size limit
-                    if let Ok(body) = read_body_limited(res, FUZZER_MAX_BODY).await {
-                        // Avoid HTML homepages (soft 404s returning 200)
-                        let is_html = body.to_lowercase().contains("<html");
-                        
-                        if !is_html || path.contains("swagger") {
-                            exposed_files.push(path.to_string());
-                        }
+                && res.status() == reqwest::StatusCode::OK
+            {
+                // Read body with size limit
+                if let Ok(body) = read_body_limited(res, FUZZER_MAX_BODY).await {
+                    // Avoid HTML homepages (soft 404s returning 200)
+                    let is_html = body.to_lowercase().contains("<html");
+
+                    if !is_html || path.contains("swagger") {
+                        exposed_files.push(path.to_string());
                     }
                 }
+            }
         }
 
         if !exposed_files.is_empty() {

@@ -168,7 +168,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function sev(f) {
-        return (typeof f.severity === 'string' ? f.severity : 'info').toLowerCase();
+        const severity = (typeof f.severity === 'string' ? f.severity : 'info').toLowerCase();
+        return ['critical', 'high', 'medium', 'low', 'info'].includes(severity) ? severity : 'info';
     }
 
     // ─── Filters ───
@@ -219,45 +220,51 @@ document.addEventListener('DOMContentLoaded', () => {
         const severity = sev(f);
         const icon = pluginIcons[f.plugin_name] || '📋';
         const time = new Date(f.created_at).toLocaleTimeString();
+        const pluginName = esc(f.plugin_name || 'unknown');
+        const findingType = esc(formatType(f.finding_type || 'unknown'));
+        const safeSeverity = esc(severity);
+        const safeTime = esc(time);
 
         card.innerHTML = `
             <div class="finding-top">
-                <div class="finding-plugin">${icon} ${f.plugin_name}</div>
+                <div class="finding-plugin">${icon} ${pluginName}</div>
                 <div class="finding-meta">
-                    <span class="finding-time">${time}</span>
-                    <span class="severity-badge severity-${severity}">${severity}</span>
+                    <span class="finding-time">${safeTime}</span>
+                    <span class="severity-badge severity-${severity}">${safeSeverity}</span>
                 </div>
             </div>
-            <div class="finding-type">${formatType(f.finding_type)}</div>
+            <div class="finding-type">${findingType}</div>
             <div class="finding-body">${renderData(f)}</div>
         `;
         return card;
     }
 
     function formatType(t) {
-        return t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        return String(t).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     }
 
     // ─── Smart Data Rendering ───
     function renderData(f) {
         const d = f.data;
-        if (!d || typeof d !== 'object') return `<pre>${JSON.stringify(d, null, 2)}</pre>`;
+        if (!d || typeof d !== 'object') return `<pre>${esc(JSON.stringify(d, null, 2))}</pre>`;
 
         // Social profiles — clickable links
         if (f.finding_type === 'social_profile') {
             const url = d.profile_url || '';
+            const href = safeHttpUrl(url);
             return `
                 <div class="finding-row"><span class="finding-key">Platform</span><span class="finding-value">${esc(d.platform || '')}</span></div>
                 <div class="finding-row"><span class="finding-key">Username</span><span class="finding-value">${esc(d.username || '')}</span></div>
-                <div class="finding-row"><span class="finding-key">Profile</span><span class="finding-value"><a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></span></div>
+                <div class="finding-row"><span class="finding-key">Profile</span><span class="finding-value">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(url)}</a>` : esc(url)}</span></div>
             `;
         }
 
         // HTTP response
         if (f.finding_type === 'http_response') {
+            const href = safeHttpUrl(d.url || '');
             return `
-                <div class="finding-row"><span class="finding-key">URL</span><span class="finding-value"><a href="${esc(d.url || '')}" target="_blank" rel="noopener">${esc(d.url || '')}</a></span></div>
-                <div class="finding-row"><span class="finding-key">Status</span><span class="finding-value">${d.status || ''}</span></div>
+                <div class="finding-row"><span class="finding-key">URL</span><span class="finding-value">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(d.url || '')}</a>` : esc(d.url || '')}</span></div>
+                <div class="finding-row"><span class="finding-key">Status</span><span class="finding-value">${esc(String(d.status || ''))}</span></div>
                 <div class="finding-row"><span class="finding-key">Server</span><span class="finding-value">${esc(d.server || '')}</span></div>
                 <div class="finding-row"><span class="finding-key">WAF</span><span class="finding-value">${esc(d.waf || 'none')}</span></div>
                 ${d.title ? `<div class="finding-row"><span class="finding-key">Title</span><span class="finding-value">${esc(d.title)}</span></div>` : ''}
@@ -310,15 +317,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 html += `<ul class="finding-list">${d.interesting_paths.map(p => `<li>⚠️ ${esc(p)}</li>`).join('')}</ul>`;
             }
             if (d.sitemaps && d.sitemaps.length > 0) {
-                html += `<ul class="finding-list">${d.sitemaps.map(s => `<li>🗺️ <a href="${esc(s)}" target="_blank" rel="noopener">${esc(s)}</a></li>`).join('')}</ul>`;
+                html += `<ul class="finding-list">${d.sitemaps.map(s => {
+                    const href = safeHttpUrl(s);
+                    return `<li>🗺️ ${href ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(s)}</a>` : esc(s)}</li>`;
+                }).join('')}</ul>`;
             }
             return html;
         }
 
         // Tech stack
         if (f.finding_type === 'tech_stack') {
+            const href = safeHttpUrl(d.url || '');
             return `
-                <div class="finding-row"><span class="finding-key">URL</span><span class="finding-value"><a href="${esc(d.url || '')}" target="_blank" rel="noopener">${esc(d.url || '')}</a></span></div>
+                <div class="finding-row"><span class="finding-key">URL</span><span class="finding-value">${href ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(d.url || '')}</a>` : esc(d.url || '')}</span></div>
                 <ul class="finding-list">${(d.technologies || []).map(t => `<li>⚙️ ${esc(t)}</li>`).join('')}</ul>
             `;
         }
@@ -346,9 +357,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return Object.entries(d)
             .map(([k, v]) => {
                 const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
-                const isUrl = typeof v === 'string' && (v.startsWith('http://') || v.startsWith('https://'));
-                const display = isUrl
-                    ? `<a href="${esc(v)}" target="_blank" rel="noopener">${esc(v)}</a>`
+                const href = typeof v === 'string' ? safeHttpUrl(v) : '';
+                const display = href
+                    ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(v)}</a>`
                     : esc(val);
                 return `<div class="finding-row"><span class="finding-key">${esc(k)}</span><span class="finding-value">${display}</span></div>`;
             }).join('');
@@ -359,5 +370,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const el = document.createElement('span');
         el.textContent = s;
         return el.innerHTML;
+    }
+
+    function safeHttpUrl(value) {
+        try {
+            const url = new URL(String(value));
+            return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+        } catch {
+            return '';
+        }
     }
 });

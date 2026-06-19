@@ -1,24 +1,52 @@
-use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
+use crate::models::{Finding, FindingSeverity};
 use async_trait::async_trait;
-use reqwest::{Client, redirect::Policy};
-use tokio::sync::mpsc;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::info;
+use reqwest::{Client, redirect::Policy};
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::info;
+use uuid::Uuid;
 
 pub struct SecurityHeadersPlugin;
 
 /// Security headers to check and their descriptions
 const SECURITY_HEADERS: &[(&str, &str, &str)] = &[
-    ("strict-transport-security", "HSTS", "Enforces HTTPS connections"),
-    ("content-security-policy", "CSP", "Prevents XSS and injection attacks"),
-    ("x-frame-options", "X-Frame-Options", "Prevents clickjacking"),
-    ("x-content-type-options", "X-Content-Type-Options", "Prevents MIME sniffing"),
-    ("referrer-policy", "Referrer-Policy", "Controls referrer information"),
-    ("permissions-policy", "Permissions-Policy", "Controls browser feature access"),
-    ("x-xss-protection", "X-XSS-Protection", "Legacy XSS filter (deprecated but still checked)"),
+    (
+        "strict-transport-security",
+        "HSTS",
+        "Enforces HTTPS connections",
+    ),
+    (
+        "content-security-policy",
+        "CSP",
+        "Prevents XSS and injection attacks",
+    ),
+    (
+        "x-frame-options",
+        "X-Frame-Options",
+        "Prevents clickjacking",
+    ),
+    (
+        "x-content-type-options",
+        "X-Content-Type-Options",
+        "Prevents MIME sniffing",
+    ),
+    (
+        "referrer-policy",
+        "Referrer-Policy",
+        "Controls referrer information",
+    ),
+    (
+        "permissions-policy",
+        "Permissions-Policy",
+        "Controls browser feature access",
+    ),
+    (
+        "x-xss-protection",
+        "X-XSS-Protection",
+        "Legacy XSS filter (deprecated but still checked)",
+    ),
 ];
 
 #[async_trait]
@@ -27,7 +55,14 @@ impl Plugin for SecurityHeadersPlugin {
         "security_headers"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
@@ -38,7 +73,7 @@ impl Plugin for SecurityHeadersPlugin {
 
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
-            .redirect(Policy::limited(3))
+            .redirect(Policy::none())
             .danger_accept_invalid_certs(true)
             .build()?;
 

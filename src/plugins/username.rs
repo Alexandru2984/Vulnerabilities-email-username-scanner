@@ -1,16 +1,16 @@
-use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
+use crate::models::{Finding, FindingSeverity};
 use async_trait::async_trait;
-use reqwest::Client;
-use tokio::sync::mpsc;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::{info, warn};
-use std::time::Duration;
+use futures::stream::{self, StreamExt};
+use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
-use futures::stream::{self, StreamExt};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+use uuid::Uuid;
 
 pub struct UsernameFootprintPlugin;
 
@@ -69,7 +69,14 @@ impl Plugin for UsernameFootprintPlugin {
         "username_footprint"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, _resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        _resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()> {
         let username = match target_type {
             TargetType::Username => target.to_string(),
             TargetType::Email => target.split('@').next().unwrap_or(target).to_string(),
@@ -77,7 +84,7 @@ impl Plugin for UsernameFootprintPlugin {
         };
 
         info!(plugin = "username_footprint", username = %username, "Running Sherlock username engine");
-        
+
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
@@ -107,18 +114,23 @@ impl Plugin for UsernameFootprintPlugin {
         // Phase 1: Probe with a definitely-nonexistent user to get baseline responses
         // This detects sites that return 200 for any username (soft 404)
         let probe_user = "xz__nonexistent__user__9q8w7e6r5t4y";
-        let probe_results: Arc<tokio::sync::Mutex<HashMap<String, ProbeResult>>> = 
+        let probe_results: Arc<tokio::sync::Mutex<HashMap<String, ProbeResult>>> =
             Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
-        let status_code_sites: Vec<(String, String)> = sites.iter()
+        let status_code_sites: Vec<(String, String)> = sites
+            .iter()
             .filter(|(_, site)| site.error_type == "status_code")
             .map(|(name, site)| (name.clone(), site.url.clone()))
             .collect();
 
-        info!(count = status_code_sites.len(), "Loaded sites — running false-positive probes");
+        info!(
+            count = status_code_sites.len(),
+            "Loaded sites — running false-positive probes"
+        );
 
         // Run probes in parallel (limited concurrency)
-        let probe_tasks: Vec<_> = status_code_sites.iter()
+        let probe_tasks: Vec<_> = status_code_sites
+            .iter()
             .map(|(site_name, url_template)| {
                 let probe_url = url_template.replace("{}", probe_user);
                 let client = client.clone();
@@ -129,7 +141,10 @@ impl Plugin for UsernameFootprintPlugin {
                     if let Ok(res) = client.get(&probe_url).send().await {
                         let status = res.status().as_u16();
                         let body_len = res.bytes().await.map(|b| b.len()).unwrap_or(0);
-                        probe_results.lock().await.insert(site_name, ProbeResult { status, body_len });
+                        probe_results
+                            .lock()
+                            .await
+                            .insert(site_name, ProbeResult { status, body_len });
                     }
                 }
             })
@@ -154,7 +169,7 @@ impl Plugin for UsernameFootprintPlugin {
             let username = username.clone();
             let error_msg = site_data.error_msg.clone();
             let probe_baseline = probe_data.get(&site_name).cloned();
-            
+
             tasks.push(async move {
                 let res = match client.get(&url).send().await {
                     Ok(r) => r,
@@ -181,7 +196,8 @@ impl Plugin for UsernameFootprintPlugin {
                 // this site returns 200 for everyone → skip it
                 if let Some(baseline) = &probe_baseline {
                     if baseline.status == status {
-                        let size_diff = (body.len() as i64 - baseline.body_len as i64).unsigned_abs();
+                        let size_diff =
+                            (body.len() as i64 - baseline.body_len as i64).unsigned_abs();
                         let threshold = (baseline.body_len as f64 * 0.05) as u64; // 5% tolerance
                         if size_diff <= threshold.max(200) {
                             return; // Same response as non-existent user → false positive

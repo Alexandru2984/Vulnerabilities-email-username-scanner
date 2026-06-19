@@ -1,13 +1,14 @@
 use crate::models::Finding;
-use crate::plugins::{get_all_plugins, TargetType};
+use crate::plugins::{TargetType, get_all_plugins};
 use chrono::Utc;
+use futures::StreamExt;
 use regex::Regex;
 use sqlx::PgPool;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn, instrument};
+use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
 /// Maximum response body size plugins are allowed to read (5 MB)
@@ -106,9 +107,18 @@ impl Engine {
             let target_clone = target_arc.clone();
             let scan_id_clone = scan_id;
             let ip_clone = resolved_ip;
-            
+
             let handle = tokio::spawn(async move {
-                if let Err(e) = plugin.run(scan_id_clone, &target_clone, ip_clone, target_type, tx_clone).await {
+                if let Err(e) = plugin
+                    .run(
+                        scan_id_clone,
+                        &target_clone,
+                        ip_clone,
+                        target_type,
+                        tx_clone,
+                    )
+                    .await
+                {
                     error!(plugin = plugin.name(), "Plugin failed: {}", e);
                 }
             });
@@ -183,7 +193,9 @@ pub fn classify_target(target: &str) -> TargetType {
 pub fn validate_target(target: &str) -> anyhow::Result<()> {
     // Enforce maximum length
     if target.len() > 255 {
-        return Err(anyhow::anyhow!("Target too long. Maximum length is 255 characters."));
+        return Err(anyhow::anyhow!(
+            "Target too long. Maximum length is 255 characters."
+        ));
     }
 
     if target.is_empty() {
@@ -192,12 +204,22 @@ pub fn validate_target(target: &str) -> anyhow::Result<()> {
 
     // Block control characters, newlines, tabs, null bytes
     if target.bytes().any(|b| b < 0x20 || b == 0x7f) {
-        return Err(anyhow::anyhow!("Target contains invalid control characters."));
+        return Err(anyhow::anyhow!(
+            "Target contains invalid control characters."
+        ));
     }
 
     // Block schema prefixes
     let lower = target.to_lowercase();
-    let blocked_schemas = ["://", "file:", "javascript:", "data:", "ftp:", "gopher:", "ldap:"];
+    let blocked_schemas = [
+        "://",
+        "file:",
+        "javascript:",
+        "data:",
+        "ftp:",
+        "gopher:",
+        "ldap:",
+    ];
     for schema in blocked_schemas {
         if lower.contains(schema) {
             return Err(anyhow::anyhow!("Target contains blocked schema prefix."));
@@ -206,7 +228,9 @@ pub fn validate_target(target: &str) -> anyhow::Result<()> {
 
     // Block path traversal
     if target.contains("..") || target.contains('/') || target.contains('\\') {
-        return Err(anyhow::anyhow!("Target contains path traversal characters."));
+        return Err(anyhow::anyhow!(
+            "Target contains path traversal characters."
+        ));
     }
 
     let target_type = classify_target(target);
@@ -217,34 +241,35 @@ pub fn validate_target(target: &str) -> anyhow::Result<()> {
             let domain_re = Regex::new(
                 r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$"
             ).unwrap();
-            let ipv4_re = Regex::new(
-                r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$"
-            ).unwrap();
+            let ipv4_re = Regex::new(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$").unwrap();
             if !domain_re.is_match(target) && !ipv4_re.is_match(target) {
-                return Err(anyhow::anyhow!("Invalid domain/IP format. Provide a valid domain name or IPv4 address."));
+                return Err(anyhow::anyhow!(
+                    "Invalid domain/IP format. Provide a valid domain name or IPv4 address."
+                ));
             }
             // Extra validation for IPs: each octet must be 0-255
             if ipv4_re.is_match(target) {
-                let valid_octets = target.split('.').all(|o| o.parse::<u16>().is_ok_and(|n| n <= 255));
+                let valid_octets = target
+                    .split('.')
+                    .all(|o| o.parse::<u16>().is_ok_and(|n| n <= 255));
                 if !valid_octets {
                     return Err(anyhow::anyhow!("Invalid IP address: octets must be 0-255."));
                 }
             }
         }
         TargetType::Email => {
-            let email_re = Regex::new(
-                r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$"
-            ).unwrap();
+            let email_re =
+                Regex::new(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$").unwrap();
             if !email_re.is_match(target) {
                 return Err(anyhow::anyhow!("Invalid email format."));
             }
         }
         TargetType::Username => {
-            let username_re = Regex::new(
-                r"^[a-zA-Z0-9_.\-]{1,64}$"
-            ).unwrap();
+            let username_re = Regex::new(r"^[a-zA-Z0-9_.\-]{1,64}$").unwrap();
             if !username_re.is_match(target) {
-                return Err(anyhow::anyhow!("Invalid username format. Only alphanumeric, underscore, dot, and hyphen are allowed (max 64 chars)."));
+                return Err(anyhow::anyhow!(
+                    "Invalid username format. Only alphanumeric, underscore, dot, and hyphen are allowed (max 64 chars)."
+                ));
             }
         }
     }
@@ -270,6 +295,8 @@ fn is_dangerous_ipv4(ip: Ipv4Addr) -> bool {
         || ip.is_multicast()    // 224.0.0.0/4
         || is_cgnat(ip)         // 100.64.0.0/10
         || is_documentation(ip) // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
+        || is_benchmarking(ip)  // 198.18.0.0/15
+        || is_reserved_ipv4(ip) // other non-global special-use ranges
 }
 
 /// Check for CGNAT range (100.64.0.0/10)
@@ -289,6 +316,22 @@ fn is_documentation(ip: Ipv4Addr) -> bool {
     || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
 }
 
+/// Check for benchmarking range (198.18.0.0/15)
+fn is_benchmarking(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 198 && (octets[1] == 18 || octets[1] == 19)
+}
+
+/// Check for additional special-use IPv4 ranges that should not be scanned from prod.
+fn is_reserved_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    // 192.0.0.0/24 IETF protocol assignments, 192.88.99.0/24 6to4 relay,
+    // and 240.0.0.0/4 reserved for future use.
+    (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+        || (octets[0] == 192 && octets[1] == 88 && octets[2] == 99)
+        || octets[0] >= 240
+}
+
 /// Check if an IPv6 address is dangerous
 fn is_dangerous_ipv6(ip: Ipv6Addr) -> bool {
     ip.is_loopback()         // ::1
@@ -296,6 +339,7 @@ fn is_dangerous_ipv6(ip: Ipv6Addr) -> bool {
         || ip.is_multicast()     // ff00::/8
         || is_ipv6_ula(ip)       // fc00::/7 (Unique Local Address)
         || is_ipv6_link_local(ip) // fe80::/10
+        || is_ipv6_documentation(ip) // 2001:db8::/32
         || is_ipv4_mapped_dangerous(ip) // ::ffff:127.0.0.1 etc.
 }
 
@@ -309,6 +353,34 @@ fn is_ipv6_ula(ip: Ipv6Addr) -> bool {
 fn is_ipv6_link_local(ip: Ipv6Addr) -> bool {
     let segments = ip.segments();
     (segments[0] & 0xFFC0) == 0xFE80
+}
+
+/// Check for IPv6 documentation range (2001:db8::/32)
+fn is_ipv6_documentation(ip: Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    segments[0] == 0x2001 && segments[1] == 0x0db8
+}
+
+fn validate_resolved_addrs(
+    addrs: &[std::net::SocketAddr],
+    blocked_message: &str,
+) -> anyhow::Result<()> {
+    if addrs.is_empty() {
+        return Err(anyhow::anyhow!("Target did not resolve to any IP address."));
+    }
+
+    for addr in addrs {
+        let ip = addr.ip();
+        let is_dangerous = match ip {
+            IpAddr::V4(v4) => is_dangerous_ipv4(v4),
+            IpAddr::V6(v6) => is_dangerous_ipv6(v6),
+        };
+        if is_dangerous {
+            return Err(anyhow::anyhow!(blocked_message.to_string()));
+        }
+    }
+
+    Ok(())
 }
 
 /// Check if an IPv4-mapped IPv6 address (::ffff:x.x.x.x) maps to a dangerous IPv4
@@ -334,7 +406,9 @@ pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<IpAddr>> {
     // Block known cloud metadata hostnames
     for hostname in BLOCKED_HOSTNAMES {
         if t_lower == *hostname || t_lower.ends_with(&format!(".{}", hostname)) {
-            return Err(anyhow::anyhow!("Target hostname is blocked (cloud metadata)."));
+            return Err(anyhow::anyhow!(
+                "Target hostname is blocked (cloud metadata)."
+            ));
         }
     }
 
@@ -344,23 +418,10 @@ pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<IpAddr>> {
         match tokio::net::lookup_host(format!("{}:80", target)).await {
             Ok(addrs) => {
                 let all_addrs: Vec<_> = addrs.collect();
-                if all_addrs.is_empty() {
-                    return Err(anyhow::anyhow!("Target did not resolve to any IP address."));
-                }
-
-                // Validate ALL resolved IPs (not just the first one)
-                for addr in &all_addrs {
-                    let ip = addr.ip();
-                    let is_dangerous = match ip {
-                        IpAddr::V4(v4) => is_dangerous_ipv4(v4),
-                        IpAddr::V6(v6) => is_dangerous_ipv6(v6),
-                    };
-                    if is_dangerous {
-                        return Err(anyhow::anyhow!(
-                            "Target resolves to a private/reserved IP address. Scanning internal targets is not allowed."
-                        ));
-                    }
-                }
+                validate_resolved_addrs(
+                    &all_addrs,
+                    "Target resolves to a private/reserved IP address. Scanning internal targets is not allowed.",
+                )?;
 
                 // Return the first safe IP for plugins to use (prevents TOCTOU)
                 Ok(Some(all_addrs[0].ip()))
@@ -376,18 +437,12 @@ pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<IpAddr>> {
             match tokio::net::lookup_host(format!("{}:80", domain)).await {
                 Ok(addrs) => {
                     let all_addrs: Vec<_> = addrs.collect();
-                    if let Some(first) = all_addrs.first() {
-                        let ip = first.ip();
-                        let is_dangerous = match ip {
-                            IpAddr::V4(v4) => is_dangerous_ipv4(v4),
-                            IpAddr::V6(v6) => is_dangerous_ipv6(v6),
-                        };
-                        if is_dangerous {
-                            return Err(anyhow::anyhow!(
-                                "Email domain resolves to a private/reserved IP. Not allowed."
-                            ));
-                        }
-                        return Ok(Some(ip));
+                    if !all_addrs.is_empty() {
+                        validate_resolved_addrs(
+                            &all_addrs,
+                            "Email domain resolves to a private/reserved IP. Not allowed.",
+                        )?;
+                        return Ok(Some(all_addrs[0].ip()));
                     }
                 }
                 Err(_) => {} // DNS failure for email domain is OK — plugins will handle gracefully
@@ -402,20 +457,36 @@ pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<IpAddr>> {
 
 /// Read response body with a size limit to prevent memory exhaustion DoS.
 /// Returns the body as a string, or an error if it exceeds max_size.
-pub async fn read_body_limited(response: reqwest::Response, max_size: usize) -> anyhow::Result<String> {
+pub async fn read_body_limited(
+    response: reqwest::Response,
+    max_size: usize,
+) -> anyhow::Result<String> {
     let content_length = response.content_length().unwrap_or(0) as usize;
     if content_length > max_size {
-        return Err(anyhow::anyhow!("Response body too large: {} bytes (max: {})", content_length, max_size));
+        return Err(anyhow::anyhow!(
+            "Response body too large: {} bytes (max: {})",
+            content_length,
+            max_size
+        ));
     }
 
-    let bytes = response.bytes().await?;
-    if bytes.len() > max_size {
-        return Err(anyhow::anyhow!("Response body too large: {} bytes (max: {})", bytes.len(), max_size));
+    let mut stream = response.bytes_stream();
+    let mut body = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len() + chunk.len() > max_size {
+            return Err(anyhow::anyhow!(
+                "Response body too large: {} bytes (max: {})",
+                body.len() + chunk.len(),
+                max_size
+            ));
+        }
+        body.extend_from_slice(&chunk);
     }
 
-    Ok(String::from_utf8_lossy(&bytes).to_string())
+    Ok(String::from_utf8_lossy(&body).to_string())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -463,39 +534,49 @@ mod tests {
 
     #[test]
     fn test_dangerous_ipv4() {
-        assert!(is_dangerous_ipv4(Ipv4Addr::new(127, 0, 0, 1)));    // loopback
-        assert!(is_dangerous_ipv4(Ipv4Addr::new(10, 0, 0, 1)));     // private
-        assert!(is_dangerous_ipv4(Ipv4Addr::new(172, 16, 0, 1)));   // private
-        assert!(is_dangerous_ipv4(Ipv4Addr::new(192, 168, 1, 1)));  // private
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(127, 0, 0, 1))); // loopback
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(10, 0, 0, 1))); // private
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(172, 16, 0, 1))); // private
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(192, 168, 1, 1))); // private
         assert!(is_dangerous_ipv4(Ipv4Addr::new(169, 254, 169, 254))); // link-local (AWS metadata)
-        assert!(is_dangerous_ipv4(Ipv4Addr::new(0, 0, 0, 0)));     // unspecified
-        assert!(is_dangerous_ipv4(Ipv4Addr::new(100, 64, 0, 1)));   // CGNAT
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(0, 0, 0, 0))); // unspecified
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(100, 64, 0, 1))); // CGNAT
         assert!(is_dangerous_ipv4(Ipv4Addr::new(100, 127, 255, 255))); // CGNAT upper bound
 
         // Public IPs should NOT be dangerous
-        assert!(!is_dangerous_ipv4(Ipv4Addr::new(8, 8, 8, 8)));     // Google DNS
-        assert!(!is_dangerous_ipv4(Ipv4Addr::new(1, 1, 1, 1)));     // Cloudflare
-        assert!(!is_dangerous_ipv4(Ipv4Addr::new(172, 1, 1, 1)));   // Public (NOT in 172.16/12)
+        assert!(!is_dangerous_ipv4(Ipv4Addr::new(8, 8, 8, 8))); // Google DNS
+        assert!(!is_dangerous_ipv4(Ipv4Addr::new(1, 1, 1, 1))); // Cloudflare
+        assert!(!is_dangerous_ipv4(Ipv4Addr::new(172, 1, 1, 1))); // Public (NOT in 172.16/12)
         assert!(!is_dangerous_ipv4(Ipv4Addr::new(100, 63, 255, 255))); // Below CGNAT range
     }
 
     #[test]
     fn test_dangerous_ipv6() {
-        assert!(is_dangerous_ipv6(Ipv6Addr::LOCALHOST));    // ::1
-        assert!(is_dangerous_ipv6(Ipv6Addr::UNSPECIFIED));  // ::
+        assert!(is_dangerous_ipv6(Ipv6Addr::LOCALHOST)); // ::1
+        assert!(is_dangerous_ipv6(Ipv6Addr::UNSPECIFIED)); // ::
 
         // ULA
-        assert!(is_dangerous_ipv6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1)));
-        assert!(is_dangerous_ipv6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1)));
+        assert!(is_dangerous_ipv6(Ipv6Addr::new(
+            0xfc00, 0, 0, 0, 0, 0, 0, 1
+        )));
+        assert!(is_dangerous_ipv6(Ipv6Addr::new(
+            0xfd00, 0, 0, 0, 0, 0, 0, 1
+        )));
 
         // Link-local
-        assert!(is_dangerous_ipv6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)));
+        assert!(is_dangerous_ipv6(Ipv6Addr::new(
+            0xfe80, 0, 0, 0, 0, 0, 0, 1
+        )));
 
         // IPv4-mapped dangerous
-        assert!(is_dangerous_ipv6(Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001))); // ::ffff:127.0.0.1
+        assert!(is_dangerous_ipv6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001
+        ))); // ::ffff:127.0.0.1
 
         // Public IPv6 should NOT be dangerous
-        assert!(!is_dangerous_ipv6(Ipv6Addr::new(0x2607, 0xf8b0, 0x4004, 0x800, 0, 0, 0, 0x200e))); // Google
+        assert!(!is_dangerous_ipv6(Ipv6Addr::new(
+            0x2607, 0xf8b0, 0x4004, 0x800, 0, 0, 0, 0x200e
+        ))); // Google
     }
 
     #[tokio::test]

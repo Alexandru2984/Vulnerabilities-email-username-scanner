@@ -1,12 +1,12 @@
-use crate::models::{Finding, FindingSeverity};
 use super::{Plugin, TargetType};
+use crate::models::{Finding, FindingSeverity};
 use async_trait::async_trait;
-use reqwest::Client;
-use tokio::sync::mpsc;
-use uuid::Uuid;
 use chrono::Utc;
-use tracing::info;
+use reqwest::Client;
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tracing::info;
+use uuid::Uuid;
 
 pub struct IpInfoPlugin;
 
@@ -16,7 +16,14 @@ impl Plugin for IpInfoPlugin {
         "ip_info"
     }
 
-    async fn run(&self, scan_id: Uuid, target: &str, resolved_ip: Option<std::net::IpAddr>, target_type: TargetType, out_chan: mpsc::Sender<Finding>) -> anyhow::Result<()> {
+    async fn run(
+        &self,
+        scan_id: Uuid,
+        target: &str,
+        resolved_ip: Option<std::net::IpAddr>,
+        target_type: TargetType,
+        out_chan: mpsc::Sender<Finding>,
+    ) -> anyhow::Result<()> {
         let domain = match target_type {
             TargetType::Domain => target.to_string(),
             TargetType::Email => target.split('@').last().unwrap_or(target).to_string(),
@@ -24,10 +31,8 @@ impl Plugin for IpInfoPlugin {
         };
 
         info!(plugin = "ip_info", domain = %domain, "Fetching IP intelligence");
-        
-        let client = Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()?;
+
+        let client = Client::builder().timeout(Duration::from_secs(10)).build()?;
 
         // Use resolved IP if available (more accurate + prevents DNS rebinding)
         let query_target = if let Some(ip) = resolved_ip {
@@ -41,18 +46,19 @@ impl Plugin for IpInfoPlugin {
         let url = format!("http://ip-api.com/json/{}", query_target);
         if let Ok(res) = client.get(&url).send().await
             && let Ok(data) = res.json::<serde_json::Value>().await
-                && data.get("status").and_then(|s| s.as_str()) == Some("success") {
-                    let finding = Finding {
-                        id: Uuid::new_v4(),
-                        scan_id,
-                        plugin_name: self.name().to_string(),
-                        finding_type: "ip_intelligence".to_string(),
-                        data,
-                        severity: FindingSeverity::Info,
-                        created_at: Utc::now(),
-                    };
-                    let _ = out_chan.send(finding).await;
-                }
+            && data.get("status").and_then(|s| s.as_str()) == Some("success")
+        {
+            let finding = Finding {
+                id: Uuid::new_v4(),
+                scan_id,
+                plugin_name: self.name().to_string(),
+                finding_type: "ip_intelligence".to_string(),
+                data,
+                severity: FindingSeverity::Info,
+                created_at: Utc::now(),
+            };
+            let _ = out_chan.send(finding).await;
+        }
 
         Ok(())
     }

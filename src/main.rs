@@ -5,8 +5,11 @@ mod models;
 mod plugins;
 mod reports;
 
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+const DEFAULT_API_KEY: &str = "changeme_generate_a_secure_key";
+const MIN_API_KEY_LEN: usize = 32;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -15,19 +18,16 @@ async fn main() -> anyhow::Result<()> {
 
     // Setup structured logging with env-filter support
     // Use RUST_LOG env var to control log levels (default: info)
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    info!("Starting Autonomous Bug Bounty Recon Agent v{}...", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting Autonomous Bug Bounty Recon Agent v{}...",
+        env!("CARGO_PKG_VERSION")
+    );
 
-    // Validate critical environment
-    if std::env::var("API_KEY").unwrap_or_default() == "changeme_generate_a_secure_key" {
-        warn!("⚠️  Using default API key! Set a strong API_KEY in .env for production.");
-    }
+    validate_api_key_config()?;
 
     // Initialize Database
     let pool = db::init_db().await?;
@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let port_num: u16 = port.parse().expect("PORT must be a valid number");
     let addr = format!("{}:{}", host, port_num);
-    
+
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     info!("Listening on {}", addr);
 
@@ -51,6 +51,26 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     info!("Server shut down gracefully.");
+
+    Ok(())
+}
+
+fn validate_api_key_config() -> anyhow::Result<()> {
+    let api_key = std::env::var("API_KEY")
+        .map_err(|_| anyhow::anyhow!("API_KEY must be set before starting the server."))?;
+    let api_key = api_key.trim();
+
+    if api_key.is_empty() {
+        anyhow::bail!("API_KEY cannot be empty.");
+    }
+
+    if api_key == DEFAULT_API_KEY {
+        anyhow::bail!("Refusing to start with the default API_KEY. Generate a strong random key.");
+    }
+
+    if api_key.len() < MIN_API_KEY_LEN {
+        anyhow::bail!("API_KEY must be at least {MIN_API_KEY_LEN} characters.");
+    }
 
     Ok(())
 }
