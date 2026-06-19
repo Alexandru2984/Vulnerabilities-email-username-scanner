@@ -16,7 +16,7 @@ audit:
 	cargo audit --ignore RUSTSEC-2023-0071
 
 docker-config:
-	POSTGRES_PASSWORD=dummy docker compose config >/dev/null
+	APP_ENV_FILE=.env.example POSTGRES_PASSWORD=dummy docker compose config >/dev/null
 
 docker-build:
 	docker build .

@@ -70,7 +70,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Validate Compose config
-        run: POSTGRES_PASSWORD=dummy docker compose config >/dev/null
+        run: APP_ENV_FILE=.env.example POSTGRES_PASSWORD=dummy docker compose config >/dev/null
 
       - name: Build runtime image
         run: docker build .

@@ -20,7 +20,8 @@ services:
   app:
     build: .
     container_name: recon_app
-    env_file: .env
+    env_file:
+      - ${APP_ENV_FILE:-.env}
     environment:
       HOST: 0.0.0.0
       PORT: ${PORT:-8088}

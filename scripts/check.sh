@@ -22,4 +22,4 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo audit --ignore RUSTSEC-2023-0071
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-dummy}" docker compose config >/dev/null
+APP_ENV_FILE="${APP_ENV_FILE:-.env.example}" POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-dummy}" docker compose config >/dev/null
