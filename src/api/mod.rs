@@ -3,7 +3,13 @@ use crate::models::{Finding, Scan};
 use axum::{
     Json, Router,
     extract::{Path, Request, State},
-    http::{HeaderMap, StatusCode},
+    http::{
+        HeaderMap, HeaderValue, StatusCode,
+        header::{
+            CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HeaderName, REFERRER_POLICY,
+            STRICT_TRANSPORT_SECURITY, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
+        },
+    },
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -45,6 +51,13 @@ struct HealthResponse {
 }
 
 #[derive(Serialize)]
+struct ReadyResponse {
+    status: String,
+    database: String,
+    version: String,
+}
+
+#[derive(Serialize)]
 struct ErrorResponse {
     error: String,
 }
@@ -61,7 +74,9 @@ pub fn create_router(pool: PgPool) -> Router {
     });
 
     // Public routes (no auth)
-    let public_routes = Router::new().route("/health", get(health_check));
+    let public_routes = Router::new()
+        .route("/health", get(health_check))
+        .route("/ready", get(readiness_check));
 
     // Protected API routes (require API key)
     let protected_routes = Router::new()
@@ -87,6 +102,7 @@ pub fn create_router(pool: PgPool) -> Router {
     Router::new()
         .nest("/api", api_routes)
         .fallback_service(frontend_service)
+        .layer(middleware::from_fn(security_headers_middleware))
         .layer(CorsLayer::new()) // Default: restrictive same-origin only
         .layer(TraceLayer::new_for_http())
 }
@@ -136,12 +152,70 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
+async fn security_headers_middleware(request: Request, next: Next) -> Response {
+    let is_api = request.uri().path().starts_with("/api/");
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    headers.insert(
+        STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+
+    if is_api {
+        headers.insert(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-store, private, max-age=0"),
+        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    } else {
+        headers.insert(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'self'; script-src 'self' https://analytics.micutu.com; connect-src 'self' https://analytics.micutu.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+            ),
+        );
+    }
+
+    response
+}
+
 /// Health check endpoint — public, no auth required
 async fn health_check() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+async fn readiness_check(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ReadyResponse>, (StatusCode, Json<ErrorResponse>)> {
+    sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            error!("Database readiness check failed: {}", e);
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Service is not ready.".to_string(),
+                }),
+            )
+        })?;
+
+    Ok(Json(ReadyResponse {
+        status: "ready".to_string(),
+        database: "ok".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    }))
 }
 
 /// Handler to start a scan — sanitizes all error messages
@@ -165,25 +239,36 @@ async fn start_scan(
         })),
         Err(e) => {
             let msg = e.to_string();
-            // Only expose validation errors to client, not internal details
-            if msg.contains("Target")
-                || msg.contains("Invalid")
-                || msg.contains("blocked")
-                || msg.contains("not allowed")
-                || msg.contains("DNS resolution")
-            {
-                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })))
-            } else {
-                // Log the real error, return generic message to client
-                error!("Internal error starting scan: {}", e);
-                Err((
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "An internal error occurred. Please try again later.".to_string(),
-                    }),
-                ))
+            match public_start_scan_error_status(&msg) {
+                Some(status) => Err((status, Json(ErrorResponse { error: msg }))),
+                None => {
+                    // Log the real error, return generic message to client
+                    error!("Internal error starting scan: {}", e);
+                    Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "An internal error occurred. Please try again later."
+                                .to_string(),
+                        }),
+                    ))
+                }
             }
         }
+    }
+}
+
+fn public_start_scan_error_status(message: &str) -> Option<StatusCode> {
+    if message.contains("Too many scans") {
+        Some(StatusCode::TOO_MANY_REQUESTS)
+    } else if message.contains("Target")
+        || message.contains("Invalid")
+        || message.contains("blocked")
+        || message.contains("not allowed")
+        || message.contains("DNS resolution")
+    {
+        Some(StatusCode::BAD_REQUEST)
+    } else {
+        None
     }
 }
 
@@ -250,4 +335,29 @@ async fn get_scan_results(
     })?;
 
     Ok(Json(findings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constant_time_eq_matches_equal_values_only() {
+        assert!(constant_time_eq(b"same-secret", b"same-secret"));
+        assert!(!constant_time_eq(b"same-secret", b"same-secreu"));
+        assert!(!constant_time_eq(b"same-secret", b"same-secret-longer"));
+    }
+
+    #[test]
+    fn start_scan_capacity_errors_are_public_429() {
+        assert_eq!(
+            public_start_scan_error_status("Too many scans are already running. Try again later."),
+            Some(StatusCode::TOO_MANY_REQUESTS)
+        );
+        assert_eq!(
+            public_start_scan_error_status("Target resolves to a private/reserved IP address."),
+            Some(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(public_start_scan_error_status("database exploded"), None);
+    }
 }

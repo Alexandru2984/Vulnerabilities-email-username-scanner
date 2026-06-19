@@ -34,6 +34,11 @@ if [ ! -f .env ]; then
     fi
 fi
 
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
 # Warn about default API key
 if grep -q "changeme_generate_a_secure_key" .env 2>/dev/null; then
     warn "You're using the default API_KEY. Generate a secure one for production:"
@@ -52,7 +57,7 @@ else
 
     MAX_WAIT=30
     WAITED=0
-    until docker compose exec -T postgres pg_isready -U recon_user -d recon_db >/dev/null 2>&1; do
+    until docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-recon_user}" -d "${POSTGRES_DB:-recon_db}" >/dev/null 2>&1; do
         sleep 1
         WAITED=$((WAITED + 1))
         if [ "$WAITED" -ge "$MAX_WAIT" ]; then
@@ -65,9 +70,14 @@ fi
 # ─── Build & Run the Rust app ───
 echo ""
 info "Building and starting Recon Agent..."
+if [[ "${DATABASE_URL:-}" == *"@postgres:"* ]]; then
+    export DATABASE_URL="${DATABASE_URL/@postgres:5432/@127.0.0.1:5454}"
+    info "Using local DATABASE_URL for cargo run."
+fi
 echo -e "────────────────────────────────────────────"
-echo -e "  ${GREEN}Dashboard:${NC}  http://localhost:${PORT:-8080}"
-echo -e "  ${GREEN}Health:${NC}     http://localhost:${PORT:-8080}/api/health"
+echo -e "  ${GREEN}Dashboard:${NC}  http://localhost:${PORT:-8088}"
+echo -e "  ${GREEN}Health:${NC}     http://localhost:${PORT:-8088}/api/health"
+echo -e "  ${GREEN}Ready:${NC}      http://localhost:${PORT:-8088}/api/ready"
 echo -e "  ${GREEN}Stop:${NC}       Ctrl+C"
 echo -e "────────────────────────────────────────────"
 echo ""

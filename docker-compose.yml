@@ -3,13 +3,46 @@ services:
     image: postgres:16-alpine
     container_name: recon_db
     environment:
-      POSTGRES_USER: recon_user
-      POSTGRES_PASSWORD: recon_password
-      POSTGRES_DB: recon_db
+      POSTGRES_USER: ${POSTGRES_USER:-recon_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-recon_db}
     ports:
-      - "5454:5432"
+      - "127.0.0.1:5454:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: recon_app
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${PORT:-8088}
+      DATABASE_URL: postgres://${POSTGRES_USER:-recon_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-recon_db}
+    ports:
+      - "127.0.0.1:${APP_BIND_PORT:-8088}:${PORT:-8088}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${PORT}/api/ready || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     restart: unless-stopped
 
 volumes:

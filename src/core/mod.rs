@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
 
@@ -16,14 +16,20 @@ pub const MAX_BODY_SIZE: usize = 5 * 1024 * 1024;
 
 /// Global scan timeout (5 minutes)
 const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
+const DEFAULT_MAX_CONCURRENT_SCANS: usize = 3;
+const MAX_CONCURRENT_SCANS_ENV: &str = "MAX_CONCURRENT_SCANS";
 
 pub struct Engine {
     pool: PgPool,
+    scan_slots: Arc<Semaphore>,
 }
 
 impl Engine {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            scan_slots: Arc::new(Semaphore::new(configured_max_concurrent_scans())),
+        }
     }
 
     #[instrument(skip(self))]
@@ -31,6 +37,11 @@ impl Engine {
         // Step 1: Validate input format
         let target = target.trim().to_string();
         validate_target(&target)?;
+
+        let permit =
+            self.scan_slots.clone().try_acquire_owned().map_err(|_| {
+                anyhow::anyhow!("Too many scans are already running. Try again later.")
+            })?;
 
         // Step 2: SSRF protection — resolve DNS and validate the resolved IP
         let resolved_ip = is_safe_target(&target).await?;
@@ -56,6 +67,7 @@ impl Engine {
         // Step 4: Spawn worker with global timeout
         let pool_clone = self.pool.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             let result = tokio::time::timeout(
                 SCAN_TIMEOUT,
                 Self::run_plugins(scan_id, target.clone(), resolved_ip, pool_clone.clone()),
@@ -175,6 +187,14 @@ impl Engine {
             info!(scan_id = %scan_id, "Scan completed successfully");
         }
     }
+}
+
+fn configured_max_concurrent_scans() -> usize {
+    std::env::var(MAX_CONCURRENT_SCANS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_SCANS)
 }
 
 /// Classify the target into Domain, Email, or Username
@@ -542,6 +562,9 @@ mod tests {
         assert!(is_dangerous_ipv4(Ipv4Addr::new(0, 0, 0, 0))); // unspecified
         assert!(is_dangerous_ipv4(Ipv4Addr::new(100, 64, 0, 1))); // CGNAT
         assert!(is_dangerous_ipv4(Ipv4Addr::new(100, 127, 255, 255))); // CGNAT upper bound
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(198, 18, 0, 1))); // benchmarking
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(192, 0, 0, 8))); // IETF protocol assignments
+        assert!(is_dangerous_ipv4(Ipv4Addr::new(240, 0, 0, 1))); // reserved
 
         // Public IPs should NOT be dangerous
         assert!(!is_dangerous_ipv4(Ipv4Addr::new(8, 8, 8, 8))); // Google DNS
@@ -566,6 +589,11 @@ mod tests {
         // Link-local
         assert!(is_dangerous_ipv6(Ipv6Addr::new(
             0xfe80, 0, 0, 0, 0, 0, 0, 1
+        )));
+
+        // Documentation
+        assert!(is_dangerous_ipv6(Ipv6Addr::new(
+            0x2001, 0x0db8, 0, 0, 0, 0, 0, 1
         )));
 
         // IPv4-mapped dangerous

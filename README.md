@@ -1,13 +1,13 @@
-# Autonomous Bug Bounty Recon Agent 🤖
+# Autonomous Bug Bounty Recon Agent
 
-A modular, extensible, and passive reconnaissance system built in **Rust**. It asynchronously scans a target domain, correlates findings from various plugins, and stores results in PostgreSQL.
+A modular and extensible reconnaissance system built in **Rust**. It asynchronously scans a target domain, email, or username, correlates findings from various plugins, and stores results in PostgreSQL.
 
 ## Features
 - **Concurrent Engine:** Built on Tokio to run multiple reconnaissance plugins simultaneously.
 - **PostgreSQL Storage:** Reliable data persistence with SQLx.
 - **REST API:** Axum-powered endpoints to start scans and view results.
 - **Dashboard:** Clean, vanilla JavaScript dark-mode frontend with API key authentication.
-- **Passive Recon:** Safely gathers information (DNS, Subdomains, HTTP headers, Security Headers, Robots.txt, Tech Stack, Port Scanning, Email Breach, Username Footprinting) without intrusive scanning.
+- **Recon Plugins:** Gathers DNS, subdomain, HTTP, security header, robots.txt, tech stack, port, breach, and username footprint findings.
 - **Hardened Security:** SSRF protection with post-DNS IP validation, API key auth, input validation, body size limits, scan timeouts, error sanitization, and graceful shutdown.
 
 ## Architecture
@@ -47,6 +47,8 @@ Edit `.env` to set your `DATABASE_URL` and generate a strong `API_KEY`:
 ```bash
 openssl rand -hex 32
 ```
+Also set a strong `POSTGRES_PASSWORD` when using Docker Compose. `MAX_CONCURRENT_SCANS`
+defaults to `3` and prevents unbounded background scan workers.
 
 #### 3. Run the Agent
 ```bash
@@ -56,7 +58,7 @@ cargo run
 #### 4. Access the Dashboard
 Open your browser and navigate to:
 ```
-http://localhost:8080
+http://localhost:8088
 ```
 Enter your API key, then input a target (e.g., `example.com`) and start scanning!
 
@@ -86,14 +88,24 @@ Enter your API key, then input a target (e.g., `example.com`) and start scanning
 - **Authentication:** API key via `X-API-Key` header on all protected endpoints.
 - **Input Validation:** Regex allowlists per target type, schema/path traversal blocking.
 - **DoS Prevention:** Concurrency limits, body size limits, scan timeouts (5 min).
+- **Production Guardrails:** Bounded background scan workers, readiness checks, DB constraints, and security headers.
 - **Error Sanitization:** Generic messages to clients, detailed errors only in server logs.
 - **Graceful Shutdown:** Handles SIGINT/SIGTERM for clean resource cleanup.
+
+## Production Notes
+
+- Keep the container bound to `127.0.0.1` and expose it through Nginx/Cloudflare.
+- Protect the dashboard with Cloudflare Access or another edge auth layer; the API key is still stored in browser session storage.
+- Generate both `API_KEY` and `POSTGRES_PASSWORD` with strong random values.
+- Use `/api/health` for liveness and `/api/ready` for readiness/DB checks.
+- Keep `target/` out of deploy/build contexts; `.dockerignore` excludes Rust build artifacts and local secrets.
 
 ## API Endpoints
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | `GET` | `/api/health` | No | Health check |
+| `GET` | `/api/ready` | No | Readiness check, including database |
 | `POST` | `/api/scan` | Yes | Start a new scan |
 | `GET` | `/api/scans/{id}` | Yes | Get scan status |
 | `GET` | `/api/scans/{id}/results` | Yes | Get scan findings |
