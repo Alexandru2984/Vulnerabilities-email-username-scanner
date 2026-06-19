@@ -294,7 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="finding-row"><span class="finding-key">Email</span><span class="finding-value">${esc(d.email || '')}</span></div>
                 <div class="finding-row"><span class="finding-key">Breaches</span><span class="finding-value">${breaches.length} found</span></div>
                 <ul class="finding-list">${breaches.map(b => `<li>💀 ${esc(b)}</li>`).join('')}</ul>
-                ${d.breaches && d.breaches.length > 20 ? `<div style="color:var(--text-muted);font-size:0.75rem;margin-top:0.3rem">...and ${d.breaches.length - 20} more</div>` : ''}
+                ${d.breaches && d.breaches.length > 20 ? `<div class="finding-note">...and ${d.breaches.length - 20} more</div>` : ''}
             `;
         }
 

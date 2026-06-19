@@ -1,10 +1,12 @@
+use anyhow::Context;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 use std::time::Duration;
 
-pub async fn init_db() -> Result<PgPool, sqlx::Error> {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+pub async fn init_db() -> anyhow::Result<PgPool> {
+    let database_url =
+        env::var("DATABASE_URL").context("DATABASE_URL must be set before starting the server.")?;
 
     let pool = PgPoolOptions::new()
         .max_connections(10)

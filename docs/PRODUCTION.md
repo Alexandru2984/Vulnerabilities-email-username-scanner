@@ -61,6 +61,7 @@ Recommended settings:
 - Add a rate limit for `/api/scan`.
 - Keep TLS mode strict.
 - Keep the origin service bound to `127.0.0.1`.
+- Keep analytics and other third-party browser scripts disabled unless you also update the CSP intentionally.
 
 ## Operations
 

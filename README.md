@@ -101,6 +101,7 @@ Enter your API key, then input a target (e.g., `example.com`) and start scanning
 
 - Keep the container bound to `127.0.0.1` and expose it through Nginx/Cloudflare.
 - Protect the dashboard with Cloudflare Access or another edge auth layer; the API key is still stored in browser session storage.
+- Keep third-party scripts out of the dashboard by default; the production CSP only allows same-origin scripts, styles, and API calls.
 - Generate both `API_KEY` and `POSTGRES_PASSWORD` with strong random values.
 - Use `/api/health` for liveness and `/api/ready` for readiness/DB checks.
 - Keep `target/` out of deploy/build contexts; `.dockerignore` excludes Rust build artifacts and local secrets.

@@ -5,6 +5,7 @@ mod models;
 mod plugins;
 mod reports;
 
+use anyhow::Context;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -39,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     // Start Server
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("PORT").unwrap_or_else(|_| "8088".to_string());
-    let port_num: u16 = port.parse().expect("PORT must be a valid number");
+    let port_num = parse_port(&port)?;
     let addr = format!("{}:{}", host, port_num);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -58,8 +59,10 @@ async fn main() -> anyhow::Result<()> {
 fn validate_api_key_config() -> anyhow::Result<()> {
     let api_key = std::env::var("API_KEY")
         .map_err(|_| anyhow::anyhow!("API_KEY must be set before starting the server."))?;
-    let api_key = api_key.trim();
+    validate_api_key_value(api_key.trim())
+}
 
+fn validate_api_key_value(api_key: &str) -> anyhow::Result<()> {
     if api_key.is_empty() {
         anyhow::bail!("API_KEY cannot be empty.");
     }
@@ -73,6 +76,11 @@ fn validate_api_key_config() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_port(port: &str) -> anyhow::Result<u16> {
+    port.parse::<u16>()
+        .with_context(|| format!("PORT must be a valid TCP port, got '{port}'"))
 }
 
 /// Wait for shutdown signals (SIGINT / SIGTERM)
@@ -97,5 +105,26 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => { info!("Received SIGINT, shutting down..."); },
         _ = terminate => { info!("Received SIGTERM, shutting down..."); },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_key_validation_rejects_unsafe_values() {
+        assert!(validate_api_key_value("").is_err());
+        assert!(validate_api_key_value(DEFAULT_API_KEY).is_err());
+        assert!(validate_api_key_value("short").is_err());
+        assert!(validate_api_key_value("0123456789abcdef0123456789abcdef").is_ok());
+    }
+
+    #[test]
+    fn port_parser_accepts_valid_tcp_ports_only() {
+        assert_eq!(parse_port("8088").unwrap(), 8088);
+        assert_eq!(parse_port("65535").unwrap(), 65535);
+        assert!(parse_port("0x1f90").is_err());
+        assert!(parse_port("70000").is_err());
     }
 }
