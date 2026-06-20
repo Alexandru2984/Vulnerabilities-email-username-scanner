@@ -489,6 +489,12 @@ input::placeholder {
 
 .select-filter:focus { border-color: var(--accent); }
 
+.results-note {
+    margin: -0.3rem 0 1rem;
+    color: var(--yellow);
+    font-size: 0.85rem;
+}
+
 /* ─── Finding Cards ─── */
 .results-grid {
     display: flex;

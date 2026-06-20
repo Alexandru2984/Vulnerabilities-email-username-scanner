@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressFill  = $('progress-fill');
     const resultsContainer = $('results-container');
     const resultsGrid   = $('results-grid');
+    const resultsNote   = $('results-note');
     const filterSeverity = $('filter-severity');
     const filterPlugin  = $('filter-plugin');
     const statTotal     = $('stat-total');
@@ -115,6 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
         scanBtn.querySelector('.btn-loader').classList.remove('hidden');
         allFindings = [];
         resultsGrid.innerHTML = '';
+        resultsNote.classList.add('hidden');
         resultsContainer.classList.add('hidden');
         statusContainer.classList.remove('hidden');
         statusText.textContent = 'Initializing...';
@@ -169,6 +171,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const rRes = await fetch(`/api/scans/${currentScanId}/results`, { headers: { 'X-API-Key': sessionStorage.getItem('api_key') } });
             if (rRes.ok) {
                 allFindings = await rRes.json();
+                if (rRes.headers.get('x-results-truncated') === 'true') {
+                    resultsNote.textContent = 'Showing the latest 1000 findings.';
+                    resultsNote.classList.remove('hidden');
+                } else {
+                    resultsNote.classList.add('hidden');
+                }
                 updateStats();
                 updatePluginFilter();
                 renderFindings();

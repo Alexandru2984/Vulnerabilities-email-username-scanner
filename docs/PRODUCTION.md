@@ -78,3 +78,8 @@ Health endpoints:
 
 - `/api/health`: process liveness.
 - `/api/ready`: database readiness.
+
+Result retrieval:
+
+- `/api/scans/{id}/results` returns the latest 1000 findings and sets
+  `x-results-truncated: true` when more rows exist.

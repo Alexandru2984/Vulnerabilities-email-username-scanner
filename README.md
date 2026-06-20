@@ -132,4 +132,7 @@ CARGO_TARGET_DIR=/tmp/recon-cargo-target cargo test --locked
 | `GET` | `/api/auth/check` | Yes | Validate API key |
 | `POST` | `/api/scan` | Yes | Start a new scan |
 | `GET` | `/api/scans/{id}` | Yes | Get scan status |
-| `GET` | `/api/scans/{id}/results` | Yes | Get scan findings |
+| `GET` | `/api/scans/{id}/results` | Yes | Get latest scan findings, capped at 1000 rows |
+
+Large result sets are capped to protect the API and dashboard. When the cap is hit,
+the response includes `x-results-truncated: true`.

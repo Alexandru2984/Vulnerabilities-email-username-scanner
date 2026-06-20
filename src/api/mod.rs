@@ -27,6 +27,9 @@ use tower_http::{
 use tracing::{error, warn};
 use uuid::Uuid;
 
+const MAX_RESULTS_PER_RESPONSE: i64 = 1_000;
+const RESULTS_TRUNCATED_HEADER: &str = "x-results-truncated";
+
 struct AppState {
     engine: Arc<Engine>,
     pool: PgPool,
@@ -324,16 +327,18 @@ async fn get_scan_status(
 async fn get_scan_results(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<Finding>>, (StatusCode, Json<ErrorResponse>)> {
-    let findings = sqlx::query_as::<_, Finding>(
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    let mut findings = sqlx::query_as::<_, Finding>(
         r#"
         SELECT id, scan_id, plugin_name, finding_type, data, severity, created_at
         FROM findings
         WHERE scan_id = $1
         ORDER BY created_at DESC
+        LIMIT $2
         "#,
     )
     .bind(id)
+    .bind(MAX_RESULTS_PER_RESPONSE + 1)
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
@@ -346,7 +351,17 @@ async fn get_scan_results(
         )
     })?;
 
-    Ok(Json(findings))
+    let truncated = findings.len() > MAX_RESULTS_PER_RESPONSE as usize;
+    if truncated {
+        findings.truncate(MAX_RESULTS_PER_RESPONSE as usize);
+    }
+
+    let headers = [(
+        HeaderName::from_static(RESULTS_TRUNCATED_HEADER),
+        HeaderValue::from_static(if truncated { "true" } else { "false" }),
+    )];
+
+    Ok((headers, Json(findings)).into_response())
 }
 
 #[cfg(test)]
@@ -371,5 +386,10 @@ mod tests {
             Some(StatusCode::BAD_REQUEST)
         );
         assert_eq!(public_start_scan_error_status("database exploded"), None);
+    }
+
+    #[test]
+    fn result_limit_fetches_one_extra_row_for_truncation_detection() {
+        assert_eq!(MAX_RESULTS_PER_RESPONSE + 1, 1_001);
     }
 }
