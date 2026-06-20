@@ -2,12 +2,13 @@
 FROM rust:1.91.0-slim AS builder
 
 WORKDIR /usr/src/recon-agent
-COPY . .
 
 # Install pkg-config and openssl (required for reqwest and sqlx)
-RUN apt-get update && \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
+
+COPY . .
 
 RUN cargo build --locked --release
 
@@ -16,7 +17,7 @@ FROM debian:trixie-slim
 
 WORKDIR /app
 
-RUN apt-get update && \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
