@@ -10,6 +10,10 @@ Set these in `.env` before deploying:
 - `POSTGRES_PASSWORD`: random database password.
 - `DATABASE_URL`: for Docker Compose, use host `postgres`; for local `cargo run`, `run.sh` rewrites it to `127.0.0.1:5454`.
 - `MAX_CONCURRENT_SCANS`: optional scan worker limit, default `3`, allowed range `1`-`64`.
+- `DB_MAX_CONNECTIONS`: optional Postgres pool max, default `10`, allowed range `1`-`64`.
+- `DB_MIN_CONNECTIONS`: optional Postgres pool minimum, default `2`, allowed range `0`-`64`; must be less than or equal to `DB_MAX_CONNECTIONS`.
+- `DB_ACQUIRE_TIMEOUT_SECS`: optional DB acquire timeout, default `5`, allowed range `1`-`60`.
+- `DB_IDLE_TIMEOUT_SECS`: optional DB idle timeout, default `300`, allowed range `30`-`3600`.
 
 Generate secrets with:
 

@@ -13,6 +13,21 @@ ok() {
     printf '[OK] %s\n' "$*"
 }
 
+require_int_range() {
+    local name="$1"
+    local value="$2"
+    local min="$3"
+    local max="$4"
+
+    case "$value" in
+        ''|*[!0-9]*)
+            fail "$name must be an integer between $min and $max."
+            ;;
+    esac
+    [ "$value" -ge "$min" ] || fail "$name must be at least $min."
+    [ "$value" -le "$max" ] || fail "$name must be at most $max."
+}
+
 [ -f .env ] || fail ".env is missing. Copy .env.example and set production values."
 
 set -a
@@ -31,13 +46,18 @@ set +a
 [ "${DATABASE_URL:-}" != "" ] || fail "DATABASE_URL is missing."
 
 MAX_CONCURRENT_SCANS_VALUE="${MAX_CONCURRENT_SCANS:-3}"
-case "$MAX_CONCURRENT_SCANS_VALUE" in
-    ''|*[!0-9]*)
-        fail "MAX_CONCURRENT_SCANS must be an integer between 1 and 64."
-        ;;
-esac
-[ "$MAX_CONCURRENT_SCANS_VALUE" -ge 1 ] || fail "MAX_CONCURRENT_SCANS must be at least 1."
-[ "$MAX_CONCURRENT_SCANS_VALUE" -le 64 ] || fail "MAX_CONCURRENT_SCANS must be at most 64."
+require_int_range "MAX_CONCURRENT_SCANS" "$MAX_CONCURRENT_SCANS_VALUE" 1 64
+
+DB_MAX_CONNECTIONS_VALUE="${DB_MAX_CONNECTIONS:-10}"
+DB_MIN_CONNECTIONS_VALUE="${DB_MIN_CONNECTIONS:-2}"
+DB_ACQUIRE_TIMEOUT_SECS_VALUE="${DB_ACQUIRE_TIMEOUT_SECS:-5}"
+DB_IDLE_TIMEOUT_SECS_VALUE="${DB_IDLE_TIMEOUT_SECS:-300}"
+
+require_int_range "DB_MAX_CONNECTIONS" "$DB_MAX_CONNECTIONS_VALUE" 1 64
+require_int_range "DB_MIN_CONNECTIONS" "$DB_MIN_CONNECTIONS_VALUE" 0 64
+[ "$DB_MIN_CONNECTIONS_VALUE" -le "$DB_MAX_CONNECTIONS_VALUE" ] || fail "DB_MIN_CONNECTIONS cannot be greater than DB_MAX_CONNECTIONS."
+require_int_range "DB_ACQUIRE_TIMEOUT_SECS" "$DB_ACQUIRE_TIMEOUT_SECS_VALUE" 1 60
+require_int_range "DB_IDLE_TIMEOUT_SECS" "$DB_IDLE_TIMEOUT_SECS_VALUE" 30 3600
 
 command -v docker >/dev/null 2>&1 || fail "docker is not installed."
 docker compose config >/dev/null

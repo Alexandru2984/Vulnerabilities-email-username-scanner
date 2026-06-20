@@ -49,6 +49,9 @@ openssl rand -hex 32
 ```
 Also set a strong `POSTGRES_PASSWORD` when using Docker Compose. `MAX_CONCURRENT_SCANS`
 defaults to `3`, must be between `1` and `64`, and prevents unbounded background scan workers.
+Database pool settings are configurable with `DB_MAX_CONNECTIONS`, `DB_MIN_CONNECTIONS`,
+`DB_ACQUIRE_TIMEOUT_SECS`, and `DB_IDLE_TIMEOUT_SECS`; keep the defaults unless the VPS or
+PostgreSQL capacity changes.
 
 #### 3. Run the Agent
 ```bash
