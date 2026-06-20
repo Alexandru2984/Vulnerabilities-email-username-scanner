@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
-    validate_api_key_config()?;
+    validate_runtime_config()?;
 
     // Initialize Database
     let pool = db::init_db().await?;
@@ -60,6 +60,12 @@ fn validate_api_key_config() -> anyhow::Result<()> {
     let api_key = std::env::var("API_KEY")
         .map_err(|_| anyhow::anyhow!("API_KEY must be set before starting the server."))?;
     validate_api_key_value(api_key.trim())
+}
+
+fn validate_runtime_config() -> anyhow::Result<()> {
+    validate_api_key_config()?;
+    core::configured_max_concurrent_scans()?;
+    Ok(())
 }
 
 fn validate_api_key_value(api_key: &str) -> anyhow::Result<()> {

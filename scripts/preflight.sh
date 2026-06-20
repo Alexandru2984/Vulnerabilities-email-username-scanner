@@ -30,6 +30,15 @@ set +a
 
 [ "${DATABASE_URL:-}" != "" ] || fail "DATABASE_URL is missing."
 
+MAX_CONCURRENT_SCANS_VALUE="${MAX_CONCURRENT_SCANS:-3}"
+case "$MAX_CONCURRENT_SCANS_VALUE" in
+    ''|*[!0-9]*)
+        fail "MAX_CONCURRENT_SCANS must be an integer between 1 and 64."
+        ;;
+esac
+[ "$MAX_CONCURRENT_SCANS_VALUE" -ge 1 ] || fail "MAX_CONCURRENT_SCANS must be at least 1."
+[ "$MAX_CONCURRENT_SCANS_VALUE" -le 64 ] || fail "MAX_CONCURRENT_SCANS must be at most 64."
+
 command -v docker >/dev/null 2>&1 || fail "docker is not installed."
 docker compose config >/dev/null
 

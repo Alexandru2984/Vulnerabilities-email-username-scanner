@@ -48,7 +48,7 @@ Edit `.env` to set your `DATABASE_URL` and generate a strong `API_KEY`:
 openssl rand -hex 32
 ```
 Also set a strong `POSTGRES_PASSWORD` when using Docker Compose. `MAX_CONCURRENT_SCANS`
-defaults to `3` and prevents unbounded background scan workers.
+defaults to `3`, must be between `1` and `64`, and prevents unbounded background scan workers.
 
 #### 3. Run the Agent
 ```bash

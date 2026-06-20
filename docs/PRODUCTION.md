@@ -9,6 +9,7 @@ Set these in `.env` before deploying:
 - `API_KEY`: random value, at least 32 characters.
 - `POSTGRES_PASSWORD`: random database password.
 - `DATABASE_URL`: for Docker Compose, use host `postgres`; for local `cargo run`, `run.sh` rewrites it to `127.0.0.1:5454`.
+- `MAX_CONCURRENT_SCANS`: optional scan worker limit, default `3`, allowed range `1`-`64`.
 
 Generate secrets with:
 

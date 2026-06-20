@@ -17,6 +17,7 @@ pub const MAX_BODY_SIZE: usize = 5 * 1024 * 1024;
 /// Global scan timeout (5 minutes)
 const SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_MAX_CONCURRENT_SCANS: usize = 3;
+const MAX_ALLOWED_CONCURRENT_SCANS: usize = 64;
 const MAX_CONCURRENT_SCANS_ENV: &str = "MAX_CONCURRENT_SCANS";
 
 pub struct Engine {
@@ -26,9 +27,12 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(pool: PgPool) -> Self {
+        let max_concurrent_scans = configured_max_concurrent_scans()
+            .expect("MAX_CONCURRENT_SCANS must be validated before router startup");
+
         Self {
             pool,
-            scan_slots: Arc::new(Semaphore::new(configured_max_concurrent_scans())),
+            scan_slots: Arc::new(Semaphore::new(max_concurrent_scans)),
         }
     }
 
@@ -189,12 +193,28 @@ impl Engine {
     }
 }
 
-fn configured_max_concurrent_scans() -> usize {
-    std::env::var(MAX_CONCURRENT_SCANS_ENV)
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_SCANS)
+pub fn configured_max_concurrent_scans() -> anyhow::Result<usize> {
+    match std::env::var(MAX_CONCURRENT_SCANS_ENV) {
+        Ok(value) => parse_max_concurrent_scans(&value),
+        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_MAX_CONCURRENT_SCANS),
+        Err(std::env::VarError::NotUnicode(_)) => Err(anyhow::anyhow!(
+            "{MAX_CONCURRENT_SCANS_ENV} must be valid UTF-8."
+        )),
+    }
+}
+
+fn parse_max_concurrent_scans(value: &str) -> anyhow::Result<usize> {
+    let parsed = value.trim().parse::<usize>().map_err(|_| {
+        anyhow::anyhow!("{MAX_CONCURRENT_SCANS_ENV} must be an integer between 1 and {MAX_ALLOWED_CONCURRENT_SCANS}.")
+    })?;
+
+    if !(1..=MAX_ALLOWED_CONCURRENT_SCANS).contains(&parsed) {
+        anyhow::bail!(
+            "{MAX_CONCURRENT_SCANS_ENV} must be between 1 and {MAX_ALLOWED_CONCURRENT_SCANS}."
+        );
+    }
+
+    Ok(parsed)
 }
 
 /// Classify the target into Domain, Email, or Username
@@ -524,6 +544,16 @@ mod tests {
         assert!(validate_target("john_doe").is_ok());
         assert!(validate_target("john.doe").is_ok());
         assert!(validate_target("john-doe").is_ok());
+    }
+
+    #[test]
+    fn test_parse_max_concurrent_scans() {
+        assert_eq!(parse_max_concurrent_scans("1").unwrap(), 1);
+        assert_eq!(parse_max_concurrent_scans("64").unwrap(), 64);
+        assert_eq!(parse_max_concurrent_scans(" 3 ").unwrap(), 3);
+        assert!(parse_max_concurrent_scans("0").is_err());
+        assert!(parse_max_concurrent_scans("65").is_err());
+        assert!(parse_max_concurrent_scans("abc").is_err());
     }
 
     #[test]
