@@ -1,5 +1,5 @@
 # Build Stage
-FROM rust:1.91.0-slim AS builder
+FROM rust:1.96.0-slim AS builder
 
 WORKDIR /usr/src/recon-agent
 
