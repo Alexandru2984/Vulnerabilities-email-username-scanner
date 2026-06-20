@@ -433,7 +433,7 @@ fn is_ipv4_mapped_dangerous(ip: Ipv6Addr) -> bool {
 }
 
 /// SSRF protection: validates the target is safe to scan.
-/// For domains: resolves DNS and validates the resolved IP is public.
+/// For domains and email domains: resolves DNS and validates the resolved IP is public.
 /// Returns the resolved IP for use by plugins (prevents DNS rebinding TOCTOU).
 ///
 /// Security model:
@@ -441,54 +441,58 @@ fn is_ipv4_mapped_dangerous(ip: Ipv6Addr) -> bool {
 /// - Post-resolution: validate ALL resolved IPs are public
 /// - Fail-closed: DNS resolution failure = blocked
 pub async fn is_safe_target(target: &str) -> anyhow::Result<Option<IpAddr>> {
-    let t_lower = target.to_lowercase();
+    let target_type = classify_target(target);
 
-    // Block known cloud metadata hostnames
-    for hostname in BLOCKED_HOSTNAMES {
-        if t_lower == *hostname || t_lower.ends_with(&format!(".{}", hostname)) {
+    let hostname = match target_type {
+        TargetType::Domain => Some(target),
+        TargetType::Email => target.split('@').next_back(),
+        TargetType::Username => None,
+    };
+
+    let Some(hostname) = hostname else {
+        // Username targets don't need DNS validation.
+        return Ok(None);
+    };
+
+    let hostname_lower = hostname.to_lowercase();
+
+    // Block known cloud metadata hostnames before DNS resolution.
+    for blocked_hostname in BLOCKED_HOSTNAMES {
+        if hostname_lower == *blocked_hostname
+            || hostname_lower.ends_with(&format!(".{}", blocked_hostname))
+        {
             return Err(anyhow::anyhow!(
                 "Target hostname is blocked (cloud metadata)."
             ));
         }
     }
 
-    let target_type = classify_target(target);
-    if target_type == TargetType::Domain {
-        // Resolve DNS — fail-closed
-        match tokio::net::lookup_host(format!("{}:80", target)).await {
-            Ok(addrs) => {
-                let all_addrs: Vec<_> = addrs.collect();
-                validate_resolved_addrs(
-                    &all_addrs,
-                    "Target resolves to a private/reserved IP address. Scanning internal targets is not allowed.",
-                )?;
+    // Resolve DNS and fail closed for both domain and email-domain targets.
+    match tokio::net::lookup_host(format!("{}:80", hostname)).await {
+        Ok(addrs) => {
+            let all_addrs: Vec<_> = addrs.collect();
+            let blocked_message = match target_type {
+                TargetType::Domain => {
+                    "Target resolves to a private/reserved IP address. Scanning internal targets is not allowed."
+                }
+                TargetType::Email => "Email domain resolves to a private/reserved IP. Not allowed.",
+                TargetType::Username => unreachable!("username targets returned before DNS lookup"),
+            };
+            validate_resolved_addrs(&all_addrs, blocked_message)?;
 
-                // Return the first safe IP for plugins to use (prevents TOCTOU)
-                Ok(Some(all_addrs[0].ip()))
-            }
-            Err(e) => {
-                // Fail-closed: if DNS resolution fails, block the scan
+            // Return the first safe IP for plugins to use (prevents TOCTOU).
+            Ok(Some(all_addrs[0].ip()))
+        }
+        Err(e) => {
+            if target_type == TargetType::Email {
+                Err(anyhow::anyhow!(
+                    "DNS resolution failed for email domain: {}",
+                    e
+                ))
+            } else {
                 Err(anyhow::anyhow!("DNS resolution failed for target: {}", e))
             }
         }
-    } else if target_type == TargetType::Email {
-        // For emails, resolve the domain part so domain plugins get a safe resolved_ip
-        if let Some(domain) = target.split('@').next_back()
-            && let Ok(addrs) = tokio::net::lookup_host(format!("{}:80", domain)).await
-        {
-            let all_addrs: Vec<_> = addrs.collect();
-            if !all_addrs.is_empty() {
-                validate_resolved_addrs(
-                    &all_addrs,
-                    "Email domain resolves to a private/reserved IP. Not allowed.",
-                )?;
-                return Ok(Some(all_addrs[0].ip()));
-            }
-        }
-        Ok(None)
-    } else {
-        // Username targets don't need DNS validation
-        Ok(None)
     }
 }
 
@@ -637,13 +641,16 @@ mod tests {
     #[tokio::test]
     async fn test_is_safe_target_blocked_hostnames() {
         assert!(is_safe_target("metadata.google.internal").await.is_err());
+        assert!(
+            is_safe_target("user@metadata.google.internal")
+                .await
+                .is_err()
+        );
         assert!(is_safe_target("kubernetes.default.svc").await.is_err());
     }
 
     #[tokio::test]
-    async fn test_is_safe_target_non_domain() {
-        // Emails and usernames skip DNS resolution
-        assert!(is_safe_target("user@yahoo.com").await.is_ok());
+    async fn test_is_safe_target_username_skips_dns() {
         assert!(is_safe_target("johndoe").await.is_ok());
     }
 }
