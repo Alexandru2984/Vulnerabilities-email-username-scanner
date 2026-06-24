@@ -22,7 +22,7 @@ jobs:
       CARGO_TARGET_DIR: /tmp/recon-cargo-target
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Validate Compose config
         run: APP_ENV_FILE=.env.example POSTGRES_PASSWORD=dummy docker compose config >/dev/null
